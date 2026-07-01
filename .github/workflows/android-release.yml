@@ -33,10 +33,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mobile
     steps:
+      # Runs BEFORE checkout — must NOT use the mobile/ working dir (it doesn't
+      # exist yet). Post-checkout steps set working-directory: mobile explicitly.
       - name: Resolve tag
         id: tag
         run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
@@ -58,6 +57,7 @@ jobs:
 
       - name: Read version from pubspec (single source of truth)
         id: ver
+        working-directory: mobile
         run: |
           RAW=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | tr -d ' \r')
           NAME="${RAW%%+*}"
@@ -68,9 +68,11 @@ jobs:
           echo "Building $NAME+$BUILD from tag ${{ steps.tag.outputs.tag }}"
 
       - name: Install dependencies
+        working-directory: mobile
         run: flutter pub get
 
       - name: Configure release signing
+        working-directory: mobile
         run: |
           if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > android/upload-keystore.jks
@@ -86,12 +88,14 @@ jobs:
           fi
 
       - name: Build release APK
+        working-directory: mobile
         run: >
           flutter build apk --release
           --build-name=${{ steps.ver.outputs.name }}
           --build-number=${{ steps.ver.outputs.build }}
 
       - name: Stage APK
+        working-directory: mobile
         run: cp build/app/outputs/flutter-apk/app-release.apk hivedownload-${{ steps.ver.outputs.name }}.apk
 
       - name: Upload build artifact
