@@ -1,0 +1,20 @@
+# .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*_wpftmp.csproj
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Build artifacts
+*.dll
+*.pdb
+*.exe
+
+# App data (should never be committed)
+*.db
+*.db-wal
+*.db-shm

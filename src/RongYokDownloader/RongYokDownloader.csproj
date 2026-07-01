@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>RongYokDownloader</AssemblyName>
+    <RootNamespace>RongYokDownloader</RootNamespace>
+    <Version>1.0.0</Version>
+    <Company>RongYok Downloader</Company>
+    <Product>RongYok Downloader</Product>
+    <!-- Allow long Thai file paths -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\logo.png" />
+  </ItemGroup>
+
+  <!--
+    Workaround for the WPF markup-compile bug: the temporary project
+    (*_wpftmp.csproj) lists EVERY Roslyn-version variant of an analyzer package
+    (CommunityToolkit.Mvvm ships roslyn4.0 / roslyn4.3 / roslyn4.12 copies), so
+    the source generator runs three times and emits each member three times
+    (CS0102 / CS0111). Keep only the newest variant. See dotnet/wpf#6792.
+  -->
+  <Target Name="FixWpfDuplicateAnalyzers" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)"
+                Condition="$([System.String]::Copy('%(Identity)').Contains('roslyn4.0')) Or $([System.String]::Copy('%(Identity)').Contains('roslyn4.3'))" />
+    </ItemGroup>
+  </Target>
+
+</Project>

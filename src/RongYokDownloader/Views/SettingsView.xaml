@@ -1,0 +1,75 @@
+<UserControl
+    x:Class="RongYokDownloader.Views.SettingsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    FontFamily="{StaticResource AppFont}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="28,24,28,24" MaxWidth="760" HorizontalAlignment="Left">
+
+            <TextBlock Text="ตั้งค่า" Style="{StaticResource H1}" Margin="0,0,0,20" />
+
+            <!-- download folder -->
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="โฟลเดอร์สำหรับเก็บไฟล์" Style="{StaticResource H2}" />
+                    <TextBlock Text="ไฟล์วิดีโอจะถูกจัดเก็บเป็นโฟลเดอร์แยกตามเรื่อง พร้อมปกและสารบัญ" Style="{StaticResource Muted}" Margin="0,4,0,12" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding DownloadRoot, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="เลือกโฟลเดอร์…" Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Command="{Binding BrowseFolderCommand}" />
+                        <Button Grid.Column="2" Content="เปิด" Style="{StaticResource GhostButton}" Margin="8,0,0,0" Command="{Binding OpenDownloadFolderCommand}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- concurrency -->
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,14">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="จำนวนดาวน์โหลดพร้อมกัน" Style="{StaticResource H2}" VerticalAlignment="Center" />
+                        <Border HorizontalAlignment="Right" CornerRadius="8" Background="{StaticResource BgElevated}" Padding="14,4">
+                            <TextBlock Text="{Binding MaxConcurrent}" FontWeight="Bold" FontSize="15" Foreground="{StaticResource AccentHover}" />
+                        </Border>
+                    </Grid>
+                    <Slider Minimum="1" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True"
+                            Value="{Binding MaxConcurrent, Mode=TwoWay}" Margin="0,14,0,0"
+                            Foreground="{StaticResource Accent}" />
+                    <TextBlock Text="ยิ่งมากยิ่งเร็ว แต่ใช้แบนด์วิดท์มากขึ้น (แนะนำ 3–4)" Style="{StaticResource Muted}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- extras -->
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="ตัวเลือกเพิ่มเติม" Style="{StaticResource H2}" Margin="0,0,0,14" />
+                    <CheckBox Style="{StaticResource ToggleSwitch}" HorizontalAlignment="Stretch" IsChecked="{Binding SavePoster}" Margin="0,6"
+                              Content="บันทึกรูปปก (poster.jpg) ไว้ในโฟลเดอร์เรื่อง" />
+                    <Border Height="1" Background="{StaticResource Border}" Opacity="0.5" Margin="0,6" />
+                    <CheckBox Style="{StaticResource ToggleSwitch}" HorizontalAlignment="Stretch" IsChecked="{Binding WriteToc}" Margin="0,6"
+                              Content="สร้างสารบัญ index.html สำหรับแต่ละเรื่อง" />
+                </StackPanel>
+            </Border>
+
+            <!-- info -->
+            <Border Style="{StaticResource Card}" Padding="20">
+                <StackPanel>
+                    <TextBlock Text="ข้อมูลระบบ" Style="{StaticResource H2}" Margin="0,0,0,10" />
+                    <Grid Margin="0,2">
+                        <TextBlock Text="ฐานข้อมูล (SQLite)" Style="{StaticResource Muted}" />
+                        <TextBlock Text="{Binding DbPath}" Style="{StaticResource Muted}" HorizontalAlignment="Right" Foreground="{StaticResource TextPrimary}" />
+                    </Grid>
+                    <Grid Margin="0,6,0,0">
+                        <TextBlock Text="จำนวนเรื่องในฐานข้อมูล" Style="{StaticResource Muted}" />
+                        <TextBlock Text="{Binding CatalogCount}" Style="{StaticResource Muted}" HorizontalAlignment="Right" Foreground="{StaticResource TextPrimary}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
