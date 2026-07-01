@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -236,95 +235,98 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   Widget _hero(L10n l) {
     final preview = _preview;
     final showPreview = _previewReady && preview != null && preview.value.isInitialized;
+    // Full-bleed cinematic header that fills the phone width; tall.
+    final height = (MediaQuery.of(context).size.height * 0.64).clamp(380.0, 660.0);
 
-    return Stack(
-      children: [
-        AspectRatio(
-          aspectRatio: 16 / 10,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Blurred backdrop fill (poster) behind the portrait preview.
-              ImageFiltered(
-                imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: PosterImage(url: s.displayImageUrl, seed: s.id, radius: 0),
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Full-screen-width preview (BoxFit.cover) or poster until ready.
+          if (showPreview)
+            FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: preview.value.size.width,
+                height: preview.value.size.height,
+                child: VideoPlayer(preview),
               ),
-              const DecoratedBox(decoration: BoxDecoration(color: Color(0x33000000))),
+            )
+          else
+            PosterImage(url: s.displayImageUrl, seed: s.id, radius: 0),
 
-              // The showcase: EP1 autoplaying (portrait, centered). Falls back
-              // to the poster until it's ready.
-              if (showPreview)
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: preview.value.aspectRatio,
-                    child: VideoPlayer(preview),
-                  ),
-                )
-              else
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: 2 / 3,
-                    child: PosterImage(url: s.displayImageUrl, seed: s.id, radius: 8),
-                  ),
-                ),
-
-              // readability gradient
-              const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x330D0B08), Color(0xCC14110B)],
-                  ),
-                ),
+          // Fade the bottom half into the app background (from 50% down).
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Colors.transparent, T.screen],
+                stops: [0.0, 0.5, 1.0],
               ),
+            ),
+          ),
+          // subtle top scrim for the status-bar controls
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0x66000000), Colors.transparent],
+                stops: [0.0, 0.22],
+              ),
+            ),
+          ),
 
-              // tap the preview to open the full-screen player at EP1
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _episodes.isEmpty ? null : () => _play(_episodes.first),
-                  child: Center(
-                    child: AnimatedOpacity(
-                      opacity: showPreview ? 0 : 1,
-                      duration: const Duration(milliseconds: 300),
-                      child: Container(
-                        width: 58,
-                        height: 58,
-                        decoration: BoxDecoration(
-                          gradient: T.accentGradient,
-                          shape: BoxShape.circle,
-                          boxShadow: [BoxShadow(color: T.accentGlow, blurRadius: 24, spreadRadius: -4)],
-                        ),
-                        child: const Icon(Icons.play_arrow_rounded, color: T.onAccent, size: 32),
-                      ),
+          // tap the preview to open the full-screen player at EP1
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _episodes.isEmpty ? null : () => _play(_episodes.first),
+              child: Align(
+                alignment: const Alignment(0, -0.15),
+                child: AnimatedOpacity(
+                  opacity: showPreview ? 0 : 1,
+                  duration: const Duration(milliseconds: 300),
+                  child: Container(
+                    width: 62,
+                    height: 62,
+                    decoration: BoxDecoration(
+                      gradient: T.accentGradient,
+                      shape: BoxShape.circle,
+                      boxShadow: [BoxShadow(color: T.accentGlow, blurRadius: 24, spreadRadius: -4)],
                     ),
+                    child: const Icon(Icons.play_arrow_rounded, color: T.onAccent, size: 34),
                   ),
                 ),
               ),
-
-              Positioned(left: 12, top: 4, child: Pill(text: l.pick('ดูฟรี', 'FREE'), filled: true)),
-
-              // mute toggle for the ambient preview
-              if (showPreview)
-                Positioned(
-                  right: 10,
-                  bottom: 10,
-                  child: _circleBtn(
-                    _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                    _toggleMute,
-                  ),
-                ),
-            ],
+            ),
           ),
-        ),
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
+
+          // top controls
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Row(
+                children: [
+                  _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
+                  const SizedBox(width: 8),
+                  Pill(text: l.pick('ดูฟรี', 'FREE'), filled: true),
+                  const Spacer(),
+                  if (showPreview)
+                    _circleBtn(
+                      _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                      _toggleMute,
+                    ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
