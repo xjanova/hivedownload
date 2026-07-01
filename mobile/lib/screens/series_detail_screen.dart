@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
 import '../models/series.dart';
+import '../services/catalog_db.dart';
 import '../services/rongyok_client.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -39,18 +42,37 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       _loading = true;
       _error = null;
     });
+
+    final client = context.read<RongYokClient>();
+    final db = context.read<CatalogDb>();
+
+    // 1) instant paint from the cached episode list
     try {
-      final nums = await context.read<RongYokClient>().fetchEpisodeNumbers(s.id);
+      final cached = await db.getEpisodes(s.id);
+      if (mounted && cached.isNotEmpty) {
+        setState(() {
+          _episodes = cached;
+          s.episodesCount = cached.length;
+          _loading = false;
+        });
+      }
+    } catch (_) {/* ignore cache errors */}
+
+    // 2) refresh from the network, then persist
+    try {
+      final nums = await client.fetchEpisodeNumbers(s.id);
       if (!mounted) return;
       setState(() {
         _episodes = nums;
         s.episodesCount = nums.length;
         _loading = false;
+        _error = null;
       });
+      unawaited(db.upsertEpisodes(s.id, nums));
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'โหลดรายชื่อตอนไม่สำเร็จ';
+        if (_episodes.isEmpty) _error = 'โหลดรายชื่อตอนไม่สำเร็จ';
         _loading = false;
       });
     }

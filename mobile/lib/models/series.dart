@@ -121,6 +121,21 @@ class Series {
     return t;
   }
 
+  /// Rebuilds a Series from a `series` table row (see CatalogDb).
+  factory Series.fromDbRow(Map<String, Object?> m) => Series(
+        id: (m['id'] as num).toInt(),
+        title: m['title'] as String? ?? '',
+        cleanTitle: m['clean_title'] as String? ?? '',
+        description: m['description'] as String? ?? '',
+        type: DubType.values[(m['type'] as num?)?.toInt() ?? 0],
+        posterUrl: m['poster_url'] as String? ?? '',
+        jpgUrl: m['jpg_url'] as String? ?? '',
+        viewCount: (m['view_count'] as num?)?.toInt() ?? 0,
+        createdAt: m['created_at'] as String? ?? '',
+        episodesCount: (m['episodes_count'] as num?)?.toInt() ?? 0,
+        year: (m['year'] as num?)?.toInt(),
+      );
+
   static String _str(Map<String, dynamic> el, String key) {
     final v = el[key];
     return v is String ? v : '';

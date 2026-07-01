@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
+import '../main.dart' show routeObserver;
+import '../services/catalog_db.dart';
 import '../state/app_state.dart';
 import '../state/catalog_state.dart';
 import '../theme/app_theme.dart';
@@ -9,6 +11,8 @@ import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
 import '../widgets/poster_card.dart';
+import '../widgets/poster_image.dart';
+import 'playback_screen.dart';
 
 /// 02 — Home / Discover · หน้าแรก.
 class HomeScreen extends StatefulWidget {
@@ -19,13 +23,42 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
+  List<ResumeItem> _continue = [];
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<CatalogState>().load();
+      if (mounted) {
+        context.read<CatalogState>().load();
+        _loadContinue();
+      }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) routeObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  // Returning from the player → refresh "Continue watching".
+  @override
+  void didPopNext() => _loadContinue();
+
+  Future<void> _loadContinue() async {
+    try {
+      final items = await context.read<CatalogDb>().continueWatching(limit: 12);
+      if (mounted) setState(() => _continue = items);
+    } catch (_) {/* ignore */}
   }
 
   @override
@@ -36,7 +69,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return RefreshIndicator(
       color: T.accent,
       backgroundColor: T.screen,
-      onRefresh: () => catalog.load(force: true),
+      onRefresh: () async {
+        await catalog.load(force: true);
+        await _loadContinue();
+      },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
         children: [
@@ -46,6 +82,10 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 16),
           _chips(catalog),
           const SizedBox(height: 20),
+          if (_continue.isNotEmpty) ...[
+            _continueSection(l),
+            const SizedBox(height: 24),
+          ],
           if (catalog.loading && catalog.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 60),
@@ -162,6 +202,91 @@ class _HomeScreenState extends State<HomeScreen> {
                 weight: FontWeight.w600, color: active ? T.onAccent : T.textSecondary)),
       ),
     );
+  }
+
+  Widget _continueSection(L10n l) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SectionHeader(title: l.bi('ดูต่อ', 'Continue watching')),
+        SizedBox(
+          height: 134,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _continue.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            itemBuilder: (_, i) => _continueCard(l, _continue[i]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _continueCard(L10n l, ResumeItem it) {
+    final title = it.series.cleanTitle.isEmpty ? it.series.title : it.series.cleanTitle;
+    return GestureDetector(
+      onTap: () => _openContinue(it),
+      child: SizedBox(
+        width: 160,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(T.rMedia),
+              child: AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    PosterImage(url: it.series.displayImageUrl, seed: it.series.id, radius: 0),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.transparent, Color(0x99000000)],
+                        ),
+                      ),
+                    ),
+                    const Center(
+                      child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 34),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: LinearProgressIndicator(
+                        value: it.progress.clamp(0, 1).toDouble(),
+                        minHeight: 3,
+                        backgroundColor: Colors.white24,
+                        valueColor: const AlwaysStoppedAnimation(T.accent),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppTheme.body(12.5, weight: FontWeight.w600, color: T.textPrimary)),
+            Text('${l.pick('ตอนที่', 'EP')} ${it.episode}',
+                style: AppTheme.body(10.5, color: T.textFaint)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openContinue(ResumeItem it) async {
+    final db = context.read<CatalogDb>();
+    var eps = await db.getEpisodes(it.series.id);
+    if (eps.isEmpty) eps = [it.episode];
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PlaybackScreen(series: it.series, episodes: eps, startEpisode: it.episode),
+    ));
   }
 
   Widget _errorBox(L10n l, CatalogState catalog) {

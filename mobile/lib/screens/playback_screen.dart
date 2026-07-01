@@ -3,8 +3,11 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'dart:async';
+
 import '../l10n/l10n.dart';
 import '../models/series.dart';
+import '../services/catalog_db.dart';
 import '../services/format.dart';
 import '../services/rongyok_client.dart';
 import '../state/app_state.dart';
@@ -38,6 +41,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   String? _error;
   bool _controlsVisible = true;
 
+  CatalogDb? _db;
+  int _lastPosSec = 0;
+  int _lastDurSec = 0;
+  DateTime _lastResumeSave = DateTime.fromMillisecondsSinceEpoch(0);
+
   Series get s => widget.series;
 
   @override
@@ -49,7 +57,15 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _db ??= context.read<CatalogDb>();
+  }
+
+  @override
   void dispose() {
+    // Remember where we stopped (fire-and-forget; db is app-scoped).
+    _db?.saveResume(s.id, _ep, _lastPosSec, _lastDurSec);
     _controller?.removeListener(_onTick);
     _controller?.dispose();
     WakelockPlus.disable();
@@ -57,20 +73,33 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   }
 
   Future<void> _load(int ep) async {
+    // Remember progress on the episode we're leaving.
+    if (_controller != null && _lastPosSec > 0) {
+      _db?.saveResume(s.id, _ep, _lastPosSec, _lastDurSec);
+    }
+
     setState(() {
       _loading = true;
       _error = null;
     });
 
-    // Read the provider BEFORE any await so we never touch context across a gap.
+    // Read providers BEFORE any await so we never touch context across a gap.
     final client = context.read<RongYokClient>();
+    final db = _db ??= context.read<CatalogDb>();
 
     _controller?.removeListener(_onTick);
     await _controller?.dispose();
     _controller = null;
+    _lastPosSec = 0;
+    _lastDurSec = 0;
 
     try {
-      final url = await client.getVideoUrl(s.id, ep);
+      // Reuse a still-fresh cached CDN link; otherwise resolve + cache it.
+      var url = await db.freshVideoUrl(s.id, ep);
+      if (url == null) {
+        url = await client.getVideoUrl(s.id, ep);
+        if (url != null) unawaited(db.cacheVideoUrl(s.id, ep, url));
+      }
       if (!mounted) return;
       if (url == null) {
         setState(() {
@@ -85,6 +114,16 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
         httpHeaders: RongYokClient.mediaHeaders,
       );
       await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      // Resume where we left off (if past the intro and not near the end).
+      final resumeSec = await db.getResume(s.id, ep);
+      if (resumeSec != null && resumeSec > 5 &&
+          resumeSec < controller.value.duration.inSeconds - 10) {
+        await controller.seekTo(Duration(seconds: resumeSec));
+      }
       if (!mounted) {
         await controller.dispose();
         return;
@@ -110,6 +149,16 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   void _onTick() {
     final c = _controller;
     if (c == null) return;
+    if (c.value.isInitialized) {
+      _lastPosSec = c.value.position.inSeconds;
+      _lastDurSec = c.value.duration.inSeconds;
+      // Throttled resume checkpoint (~every 5s while playing).
+      final now = DateTime.now();
+      if (c.value.isPlaying && now.difference(_lastResumeSave).inSeconds >= 5) {
+        _lastResumeSave = now;
+        _db?.saveResume(s.id, _ep, _lastPosSec, _lastDurSec);
+      }
+    }
     if (c.value.isInitialized &&
         c.value.position >= c.value.duration &&
         c.value.duration > Duration.zero &&

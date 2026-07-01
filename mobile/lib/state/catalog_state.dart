@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/enums.dart';
 import '../models/series.dart';
+import '../services/catalog_db.dart';
 import '../services/rongyok_client.dart';
 
 /// The design's category chips mapped onto what rongyok actually exposes
@@ -26,29 +29,56 @@ extension CatalogFilterX on CatalogFilter {
 }
 
 class CatalogState extends ChangeNotifier {
-  CatalogState(this._client);
+  CatalogState(this._client, this._db);
   final RongYokClient _client;
+  final CatalogDb _db;
 
   List<Series> _all = [];
   bool loading = false;
   String? error;
   String _query = '';
   CatalogFilter filter = CatalogFilter.all;
+  DateTime? lastSynced;
 
   bool get isEmpty => _all.isEmpty;
   int get total => _all.length;
   String get query => _query;
 
+  /// Cache-first: shows the SQLite-cached catalog instantly, then refreshes
+  /// from rongyok in the background and upserts the DB.
   Future<void> load({bool force = false}) async {
     if (loading) return;
     if (_all.isNotEmpty && !force) return;
     loading = true;
     error = null;
     notifyListeners();
+
+    // 1) instant paint from the local cache
+    if (_all.isEmpty) {
+      try {
+        final cached = await _db.getAllSeries();
+        if (cached.isNotEmpty) {
+          _all = cached;
+          lastSynced = await _db.lastCatalogSync();
+          notifyListeners();
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('catalog cache read failed: $e');
+      }
+    }
+
+    // 2) refresh from the network, then persist
     try {
-      _all = await _client.fetchCatalog();
+      final fresh = await _client.fetchCatalog();
+      _all = fresh;
+      error = null;
+      unawaited(_db.upsertSeries(fresh));
+      lastSynced = DateTime.now();
     } catch (e) {
-      error = e is StateError ? e.message : 'โหลดคลังซีรี่ส์ไม่สำเร็จ ตรวจสอบการเชื่อมต่อ';
+      // Keep showing the cache; only surface an error if we have nothing.
+      if (_all.isEmpty) {
+        error = e is StateError ? e.message : 'โหลดคลังซีรี่ส์ไม่สำเร็จ ตรวจสอบการเชื่อมต่อ';
+      }
       if (kDebugMode) debugPrint('catalog load failed: $e');
     } finally {
       loading = false;

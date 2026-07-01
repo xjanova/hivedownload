@@ -21,6 +21,7 @@ lib/
 ├─ services/
 │   ├─ rongyok_client.dart   3 endpoints (catalog / episodes / video url) — port of C#
 │   ├─ json_extract.dart     balanced-bracket JSON extractor (port of C#)
+│   ├─ catalog_db.dart        SQLite cache (catalog / episodes / video-url / resume)
 │   ├─ ad_service.dart        ad delivery + rotation (main.thaiprompt.online)
 │   ├─ auto_updater.dart      GitHub-releases OTA + update_info.dart (version compare)
 │   └─ settings_store.dart    language / Pro flag / skipped-update tag
@@ -37,6 +38,22 @@ lib/
 3. `GET /watch/get_video.php?series_id={id}&ep={n}` (needs `Referer` +
    `X-Requested-With: XMLHttpRequest`) → `{"ok":true,"video_url":"…mp4"}`.
    CDN MP4, H.264/AAC, no DRM, links expire ~24h → resolved fresh per play.
+
+## Local cache (SQLite via `catalog_db.dart`)
+Mirrors the desktop `rongyok.db` (minus download state) so the app opens instantly
+and works offline-ish:
+- **series** — the whole catalog (poster/jpg URLs, metadata). Home/Explore paint
+  from cache first, then refresh from rongyok in the background and upsert.
+- **series_episodes** — cached episode list per series (detail opens instantly).
+- **video_cache** — resolved MP4 URLs + timestamp. Reused only within a 12h TTL
+  (CDN links expire ~24h) — otherwise re-resolved. We deliberately do **not**
+  keep stale video links.
+- **resume** — last watched position per (series, episode) → seek-to-resume on
+  play + a "Continue watching · ดูต่อ" rail on Home.
+
+Poster **image bytes** live in `cached_network_image`'s on-disk cache; the DB
+stores the **links + metadata**. Settings (language / Pro / skipped-update tag)
+stay in `shared_preferences`.
 
 ## Ad API — to build on main.thaiprompt.online (Laravel)
 The client (`AdService`) is wired and **degrades to a silent no-op until the
