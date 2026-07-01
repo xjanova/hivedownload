@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../l10n/l10n.dart';
 import '../models/series.dart';
@@ -29,12 +31,24 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   bool _loading = true;
   String? _error;
 
+  // Netflix-style ambient preview: EP1 autoplays (looping) in the hero.
+  VideoPlayerController? _preview;
+  bool _previewReady = false;
+  bool _previewStarted = false;
+  bool _muted = false;
+
   Series get s => widget.series;
 
   @override
   void initState() {
     super.initState();
     _loadEpisodes();
+  }
+
+  @override
+  void dispose() {
+    _preview?.dispose();
+    super.dispose();
   }
 
   Future<void> _loadEpisodes() async {
@@ -55,6 +69,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           s.episodesCount = cached.length;
           _loading = false;
         });
+        _maybeStartPreview();
       }
     } catch (_) {/* ignore cache errors */}
 
@@ -68,6 +83,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
         _loading = false;
         _error = null;
       });
+      _maybeStartPreview();
       unawaited(db.upsertEpisodes(s.id, nums));
     } catch (e) {
       if (!mounted) return;
@@ -78,10 +94,60 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     }
   }
 
-  void _play(int ep) {
-    Navigator.of(context).push(MaterialPageRoute(
+  void _maybeStartPreview() {
+    if (!_previewStarted && _episodes.isNotEmpty) {
+      _startPreview(_episodes.first);
+    }
+  }
+
+  Future<void> _startPreview(int ep) async {
+    if (_previewStarted) return;
+    _previewStarted = true;
+
+    final db = context.read<CatalogDb>();
+    final client = context.read<RongYokClient>();
+    try {
+      var url = await db.freshVideoUrl(s.id, ep);
+      if (url == null) {
+        url = await client.getVideoUrl(s.id, ep);
+        if (url != null) unawaited(db.cacheVideoUrl(s.id, ep, url));
+      }
+      if (url == null || !mounted) return;
+
+      final c = VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: RongYokClient.mediaHeaders,
+      );
+      await c.initialize();
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      await c.setLooping(true);
+      await c.setVolume(_muted ? 0 : 1);
+      await c.play();
+      setState(() {
+        _preview = c;
+        _previewReady = true;
+      });
+    } catch (_) {/* preview is best-effort — fall back to the poster */}
+  }
+
+  void _toggleMute() {
+    final c = _preview;
+    if (c == null) return;
+    setState(() {
+      _muted = !_muted;
+      c.setVolume(_muted ? 0 : 1);
+    });
+  }
+
+  Future<void> _play(int ep) async {
+    _preview?.pause();
+    await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => PlaybackScreen(series: s, episodes: _episodes, startEpisode: ep),
     ));
+    if (mounted) _preview?.play();
   }
 
   @override
@@ -138,6 +204,9 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   }
 
   Widget _hero(L10n l) {
+    final preview = _preview;
+    final showPreview = _previewReady && preview != null && preview.value.isInitialized;
+
     return Stack(
       children: [
         AspectRatio(
@@ -145,32 +214,77 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              PosterImage(url: s.displayImageUrl, seed: s.id, radius: 0),
-              DecoratedBox(
-                decoration: const BoxDecoration(
+              // Blurred backdrop fill (poster) behind the portrait preview.
+              ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: PosterImage(url: s.displayImageUrl, seed: s.id, radius: 0),
+              ),
+              const DecoratedBox(decoration: BoxDecoration(color: Color(0x33000000))),
+
+              // The showcase: EP1 autoplaying (portrait, centered). Falls back
+              // to the poster until it's ready.
+              if (showPreview)
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: preview.value.aspectRatio,
+                    child: VideoPlayer(preview),
+                  ),
+                )
+              else
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: 2 / 3,
+                    child: PosterImage(url: s.displayImageUrl, seed: s.id, radius: 8),
+                  ),
+                ),
+
+              // readability gradient
+              const DecoratedBox(
+                decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [Color(0x660D0B08), Color(0xE614110B)],
+                    colors: [Color(0x330D0B08), Color(0xCC14110B)],
                   ),
                 ),
               ),
-              Center(
+
+              // tap the preview to open the full-screen player at EP1
+              Positioned.fill(
                 child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
                   onTap: _episodes.isEmpty ? null : () => _play(_episodes.first),
-                  child: Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      gradient: T.accentGradient,
-                      shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: T.accentGlow, blurRadius: 24, spreadRadius: -4)],
+                  child: Center(
+                    child: AnimatedOpacity(
+                      opacity: showPreview ? 0 : 1,
+                      duration: const Duration(milliseconds: 300),
+                      child: Container(
+                        width: 58,
+                        height: 58,
+                        decoration: BoxDecoration(
+                          gradient: T.accentGradient,
+                          shape: BoxShape.circle,
+                          boxShadow: [BoxShadow(color: T.accentGlow, blurRadius: 24, spreadRadius: -4)],
+                        ),
+                        child: const Icon(Icons.play_arrow_rounded, color: T.onAccent, size: 32),
+                      ),
                     ),
-                    child: const Icon(Icons.play_arrow_rounded, color: T.onAccent, size: 32),
                   ),
                 ),
               ),
+
               Positioned(left: 12, top: 4, child: Pill(text: l.pick('ดูฟรี', 'FREE'), filled: true)),
+
+              // mute toggle for the ambient preview
+              if (showPreview)
+                Positioned(
+                  right: 10,
+                  bottom: 10,
+                  child: _circleBtn(
+                    _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                    _toggleMute,
+                  ),
+                ),
             ],
           ),
         ),
