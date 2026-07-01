@@ -1,9 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-
-import 'dart:async';
 
 import '../l10n/l10n.dart';
 import '../models/series.dart';
@@ -15,9 +16,13 @@ import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/ad_banner.dart';
 
-/// 08 — Series Playback · เล่นซีรีส์. Streaming-only: resolves a fresh CDN MP4
-/// per episode and plays it with custom transport + an episode list.
-/// Free users see a rotating ad banner; Pro (129฿/mo) removes it.
+/// 08 — Series Playback · เล่นซีรีส์.
+///
+/// Full-screen, immersive, **TikTok-style vertical feed**: one episode per page,
+/// swipe up = next episode, swipe down = previous. Adjacent episodes are
+/// pre-resolved + pre-initialised so swiping plays instantly. Only the current
+/// page has audio/plays; neighbours stay paused & ready. Keeps resume (seek +
+/// checkpoint), the 12h video-URL cache, and the free-user ad overlay.
 class PlaybackScreen extends StatefulWidget {
   const PlaybackScreen({
     super.key,
@@ -35,213 +40,229 @@ class PlaybackScreen extends StatefulWidget {
 }
 
 class _PlaybackScreenState extends State<PlaybackScreen> {
-  VideoPlayerController? _controller;
-  late int _ep;
-  bool _loading = true;
-  String? _error;
-  bool _controlsVisible = true;
+  late final PageController _pageController;
+  late int _current;
 
+  final Map<int, VideoPlayerController> _controllers = {};
+  final Set<int> _loading = {};
+  final Set<int> _failed = {};
+
+  RongYokClient? _client;
   CatalogDb? _db;
-  int _lastPosSec = 0;
-  int _lastDurSec = 0;
+
   DateTime _lastResumeSave = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _advancing = false;
 
   Series get s => widget.series;
+  List<int> get eps => widget.episodes;
 
   @override
   void initState() {
     super.initState();
-    _ep = widget.startEpisode;
+    _current = eps.indexOf(widget.startEpisode).clamp(0, eps.length - 1);
+    _pageController = PageController(initialPage: _current);
     WakelockPlus.enable();
-    _load(_ep);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _db ??= context.read<CatalogDb>();
+    if (_client == null) {
+      _client = context.read<RongYokClient>();
+      _db = context.read<CatalogDb>();
+      // kick off current + neighbours
+      _ensure(_current);
+      _ensure(_current + 1);
+      _ensure(_current - 1);
+    }
   }
 
   @override
   void dispose() {
-    // Remember where we stopped (fire-and-forget; db is app-scoped).
-    _db?.saveResume(s.id, _ep, _lastPosSec, _lastDurSec);
-    _controller?.removeListener(_onTick);
-    _controller?.dispose();
+    _saveResume(_current);
+    for (final c in _controllers.values) {
+      c.removeListener(_onTick);
+      c.dispose();
+    }
+    _pageController.dispose();
     WakelockPlus.disable();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
   }
 
-  Future<void> _load(int ep) async {
-    // Remember progress on the episode we're leaving.
-    if (_controller != null && _lastPosSec > 0) {
-      _db?.saveResume(s.id, _ep, _lastPosSec, _lastDurSec);
-    }
+  // ------------------------------------------------------- controller window
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<String?> _resolveUrl(int ep) async {
+    final db = _db!;
+    final cached = await db.freshVideoUrl(s.id, ep);
+    if (cached != null) return cached;
+    final url = await _client!.getVideoUrl(s.id, ep);
+    if (url != null) unawaited(db.cacheVideoUrl(s.id, ep, url));
+    return url;
+  }
 
-    // Read providers BEFORE any await so we never touch context across a gap.
-    final client = context.read<RongYokClient>();
-    final db = _db ??= context.read<CatalogDb>();
+  Future<void> _ensure(int index) async {
+    if (index < 0 || index >= eps.length) return;
+    if (_controllers.containsKey(index) || _loading.contains(index)) return;
+    _loading.add(index);
+    _failed.remove(index);
 
-    _controller?.removeListener(_onTick);
-    await _controller?.dispose();
-    _controller = null;
-    _lastPosSec = 0;
-    _lastDurSec = 0;
-
+    final ep = eps[index];
     try {
-      // Reuse a still-fresh cached CDN link; otherwise resolve + cache it.
-      var url = await db.freshVideoUrl(s.id, ep);
-      if (url == null) {
-        url = await client.getVideoUrl(s.id, ep);
-        if (url != null) unawaited(db.cacheVideoUrl(s.id, ep, url));
-      }
+      final url = await _resolveUrl(ep);
       if (!mounted) return;
       if (url == null) {
-        setState(() {
-          _error = 'ไม่พบลิงก์วิดีโอ (อาจหมดอายุ) ลองใหม่อีกครั้ง';
-          _loading = false;
-        });
+        _loading.remove(index);
+        _failed.add(index);
+        if (mounted) setState(() {});
         return;
       }
-
-      final controller = VideoPlayerController.networkUrl(
+      final c = VideoPlayerController.networkUrl(
         Uri.parse(url),
         httpHeaders: RongYokClient.mediaHeaders,
       );
-      await controller.initialize();
+      await c.initialize();
       if (!mounted) {
-        await controller.dispose();
+        await c.dispose();
         return;
       }
-      // Resume where we left off (if past the intro and not near the end).
-      final resumeSec = await db.getResume(s.id, ep);
-      if (resumeSec != null && resumeSec > 5 &&
-          resumeSec < controller.value.duration.inSeconds - 10) {
-        await controller.seekTo(Duration(seconds: resumeSec));
+      await c.setLooping(false);
+      final resume = await _db!.getResume(s.id, ep);
+      if (resume != null && resume > 5 && resume < c.value.duration.inSeconds - 10) {
+        await c.seekTo(Duration(seconds: resume));
       }
-      if (!mounted) {
-        await controller.dispose();
-        return;
+      _controllers[index] = c;
+      _loading.remove(index);
+      if (index == _current) {
+        c.addListener(_onTick);
+        await c.play();
       }
-      controller
-        ..addListener(_onTick)
-        ..setLooping(false)
-        ..play();
-      setState(() {
-        _controller = controller;
-        _ep = ep;
-        _loading = false;
-      });
+      if (mounted) setState(() {});
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'เล่นวิดีโอไม่สำเร็จ';
-        _loading = false;
-      });
+      _loading.remove(index);
+      _failed.add(index);
+      if (mounted) setState(() {});
     }
   }
 
-  void _onTick() {
-    final c = _controller;
-    if (c == null) return;
-    if (c.value.isInitialized) {
-      _lastPosSec = c.value.position.inSeconds;
-      _lastDurSec = c.value.duration.inSeconds;
-      // Throttled resume checkpoint (~every 5s while playing).
-      final now = DateTime.now();
-      if (c.value.isPlaying && now.difference(_lastResumeSave).inSeconds >= 5) {
-        _lastResumeSave = now;
-        _db?.saveResume(s.id, _ep, _lastPosSec, _lastDurSec);
-      }
+  void _disposeFarFrom(int center) {
+    final far = _controllers.keys.where((i) => (i - center).abs() > 1).toList();
+    for (final i in far) {
+      _saveResume(i);
+      final c = _controllers.remove(i);
+      c?.removeListener(_onTick);
+      c?.dispose();
     }
-    if (c.value.isInitialized &&
-        c.value.position >= c.value.duration &&
+  }
+
+  void _onPageChanged(int index) {
+    // leaving page: pause + remember
+    final prev = _controllers[_current];
+    if (prev != null) {
+      prev.removeListener(_onTick);
+      prev.pause();
+      _saveResume(_current);
+    }
+    _current = index;
+    _advancing = false;
+
+    final cur = _controllers[index];
+    if (cur != null) {
+      cur.addListener(_onTick);
+      cur.seekTo(cur.value.position); // nudge so the listener fires
+      cur.play();
+    } else {
+      _ensure(index);
+    }
+    _ensure(index + 1);
+    _ensure(index - 1);
+    _disposeFarFrom(index);
+    setState(() {});
+  }
+
+  void _onTick() {
+    final c = _controllers[_current];
+    if (c == null || !c.value.isInitialized) return;
+
+    final now = DateTime.now();
+    if (c.value.isPlaying && now.difference(_lastResumeSave).inSeconds >= 5) {
+      _lastResumeSave = now;
+      _saveResume(_current);
+    }
+
+    // autoplay-next → swipe to the next episode
+    if (!_advancing &&
         c.value.duration > Duration.zero &&
-        !c.value.isPlaying) {
-      _next();
+        c.value.position >= c.value.duration &&
+        !c.value.isPlaying &&
+        _current < eps.length - 1) {
+      _advancing = true;
+      _pageController.nextPage(
+          duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
     }
     if (mounted) setState(() {});
   }
 
-  int get _epIndex => widget.episodes.indexOf(_ep);
-  bool get _hasPrev => _epIndex > 0;
-  bool get _hasNext => _epIndex >= 0 && _epIndex < widget.episodes.length - 1;
-
-  void _prev() {
-    if (_hasPrev) _load(widget.episodes[_epIndex - 1]);
-  }
-
-  void _next() {
-    if (_hasNext) _load(widget.episodes[_epIndex + 1]);
+  void _saveResume(int index) {
+    final c = _controllers[index];
+    if (c == null || !c.value.isInitialized) return;
+    _db?.saveResume(
+        s.id, eps[index], c.value.position.inSeconds, c.value.duration.inSeconds);
   }
 
   void _togglePlay() {
-    final c = _controller;
+    final c = _controllers[_current];
     if (c == null) return;
     setState(() => c.value.isPlaying ? c.pause() : c.play());
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final l = context.watch<AppState>().l;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Column(
-        children: [
-          _player(l),
-          const AdBanner(placement: 'player'),
-          Expanded(child: _details(l)),
-        ],
-      ),
-    );
-  }
-
-  Widget _player(L10n l) {
-    final c = _controller;
-    return GestureDetector(
-      onTap: () => setState(() => _controlsVisible = !_controlsVisible),
-      child: Container(
-        color: Colors.black,
-        height: MediaQuery.of(context).size.height * 0.34,
-        width: double.infinity,
-        child: Stack(
-          fit: StackFit.expand,
+  void _openEpisodeSheet() {
+    final l = context.read<AppState>().l;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: T.screen,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (c != null && c.value.isInitialized)
-              Center(
-                child: AspectRatio(aspectRatio: c.value.aspectRatio, child: VideoPlayer(c)),
-              ),
-            if (_loading) const Center(child: CircularProgressIndicator(color: T.accent)),
-            if (_error != null)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_error!, textAlign: TextAlign.center, style: AppTheme.body(13, color: T.textSecondary)),
-                      const SizedBox(height: 12),
-                      TextButton(
-                        onPressed: () => _load(_ep),
-                        child: Text(l.pick('ลองใหม่', 'Retry'), style: AppTheme.body(13, color: T.accent)),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(l.bi('ตอนทั้งหมด', 'Episodes'),
+                  style: AppTheme.display(16, weight: FontWeight.w700)),
+            ),
+            Flexible(
+              child: GridView.builder(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 5, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.4),
+                itemCount: eps.length,
+                itemBuilder: (_, i) {
+                  final active = i == _current;
+                  return GestureDetector(
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _pageController.jumpToPage(i);
+                    },
+                    child: Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        gradient: active ? T.accentGradient : null,
+                        color: active ? null : const Color(0x14FFFFFF),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: active ? Colors.transparent : T.hairline),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            if (_controlsVisible && _error == null) _controls(c),
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
-                ),
+                      child: Text('${eps[i]}',
+                          style: AppTheme.display(14,
+                              weight: FontWeight.w700,
+                              color: active ? T.onAccent : T.textSecondary)),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -250,59 +271,117 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     );
   }
 
-  Widget _controls(VideoPlayerController? c) {
-    final playing = c?.value.isPlaying ?? false;
-    return Container(
-      color: const Color(0x33000000),
-      child: Column(
+  @override
+  Widget build(BuildContext context) {
+    final l = context.watch<AppState>().l;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
         children: [
-          const Spacer(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _circleBtn(Icons.skip_previous_rounded, _hasPrev ? _prev : null, size: 44),
-              const SizedBox(width: 24),
-              GestureDetector(
-                onTap: _togglePlay,
-                child: Container(
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    gradient: T.accentGradient,
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: T.accentGlow, blurRadius: 22, spreadRadius: -4)],
-                  ),
-                  child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: T.onAccent, size: 32),
+          PageView.builder(
+            controller: _pageController,
+            scrollDirection: Axis.vertical,
+            itemCount: eps.length,
+            onPageChanged: _onPageChanged,
+            itemBuilder: (_, index) => _EpisodePage(
+              controller: _controllers[index],
+              failed: _failed.contains(index),
+              onTapVideo: index == _current ? _togglePlay : null,
+              onRetry: () => _ensure(index),
+              l: l,
+            ),
+          ),
+          // top bar (back + title)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Row(
+                  children: [
+                    _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(s.cleanTitle.isEmpty ? s.title : s.cleanTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTheme.display(15,
+                                  weight: FontWeight.w700, color: Colors.white)),
+                          Text('${l.pick('ตอนที่', 'EP')} ${eps[_current]} · ${_current + 1}/${eps.length}',
+                              style: AppTheme.body(11.5, color: Colors.white70)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 24),
-              _circleBtn(Icons.skip_next_rounded, _hasNext ? _next : null, size: 44),
-            ],
+            ),
           ),
-          const Spacer(),
-          if (c != null && c.value.isInitialized) _scrubber(c),
+          // right action rail (episodes list)
+          Positioned(
+            right: 10,
+            bottom: 130,
+            child: Column(
+              children: [
+                _railBtn(Icons.grid_view_rounded, l.pick('ตอน', 'Eps'), _openEpisodeSheet),
+                const SizedBox(height: 18),
+                _railBtn(
+                  _controllers[_current]?.value.isPlaying ?? false
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  '',
+                  _togglePlay,
+                ),
+              ],
+            ),
+          ),
+          // bottom: ad (free users) + scrubber
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const AdBanner(placement: 'player', height: 56),
+                  _scrubber(),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _scrubber(VideoPlayerController c) {
+  Widget _scrubber() {
+    final c = _controllers[_current];
+    if (c == null || !c.value.isInitialized) {
+      return const SizedBox(height: 24);
+    }
     final pos = c.value.position;
     final dur = c.value.duration;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
       child: Row(
         children: [
-          Text(Format.duration(pos.inSeconds), style: AppTheme.body(11, color: Colors.white70)),
+          Text(Format.duration(pos.inSeconds),
+              style: AppTheme.body(10.5, color: Colors.white70)),
           Expanded(
             child: SliderTheme(
               data: SliderThemeData(
-                trackHeight: 3,
+                trackHeight: 2.5,
                 activeTrackColor: T.accent,
                 inactiveTrackColor: Colors.white24,
                 thumbColor: T.accentHi,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 11),
               ),
               child: Slider(
                 value: dur.inMilliseconds == 0
@@ -313,71 +392,104 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
               ),
             ),
           ),
-          Text(Format.duration(dur.inSeconds), style: AppTheme.body(11, color: Colors.white70)),
+          Text(Format.duration(dur.inSeconds),
+              style: AppTheme.body(10.5, color: Colors.white70)),
         ],
       ),
     );
   }
 
-  Widget _details(L10n l) {
-    return DecoratedBox(
-      decoration: T.screenBackground,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 16, 18, 24),
-        children: [
-          Text(s.cleanTitle.isEmpty ? s.title : s.cleanTitle,
-              style: AppTheme.display(20, weight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text('${l.pick('ตอนที่', 'EP')} $_ep  ·  ${s.typeThai}  ·  ${widget.episodes.length} ${l.pick('ตอน', 'eps')}',
-              style: AppTheme.body(12.5, color: T.accent)),
-          const SizedBox(height: 16),
-          Text(l.bi('ตอนทั้งหมด', 'Episodes'), style: AppTheme.display(16, weight: FontWeight.w600)),
-          const SizedBox(height: 10),
-          for (final ep in widget.episodes) _epRow(l, ep),
-        ],
-      ),
-    );
-  }
-
-  Widget _epRow(L10n l, int ep) {
-    final current = ep == _ep;
-    return InkWell(
-      onTap: () => _load(ep),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: current ? T.accentSoft : const Color(0x0DFFFFFF),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: current ? T.accentGlow : T.hairline),
-        ),
-        child: Row(
+  Widget _railBtn(IconData icon, String label, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Column(
           children: [
-            Text('$ep',
-                style: AppTheme.display(15, weight: FontWeight.w700, color: current ? T.accent : T.textSecondary)),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text('${l.pick('ตอนที่', 'Episode')} $ep',
-                  style: AppTheme.body(13.5, weight: FontWeight.w500, color: T.textPrimary)),
+            Container(
+              width: 46,
+              height: 46,
+              decoration: const BoxDecoration(color: Color(0x33000000), shape: BoxShape.circle),
+              child: Icon(icon, color: Colors.white, size: 24),
             ),
-            if (current)
-              Text(l.pick('กำลังเล่น', 'Now playing'), style: AppTheme.body(11, color: T.accent)),
+            if (label.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(label, style: AppTheme.body(10, color: Colors.white70)),
+            ],
+          ],
+        ),
+      );
+
+  Widget _circleBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 38,
+          height: 38,
+          decoration: const BoxDecoration(color: Color(0x55000000), shape: BoxShape.circle),
+          child: Icon(icon, color: Colors.white, size: 20),
+        ),
+      );
+}
+
+/// One full-screen page in the vertical feed.
+class _EpisodePage extends StatelessWidget {
+  const _EpisodePage({
+    required this.controller,
+    required this.failed,
+    required this.onTapVideo,
+    required this.onRetry,
+    required this.l,
+  });
+
+  final VideoPlayerController? controller;
+  final bool failed;
+  final VoidCallback? onTapVideo;
+  final VoidCallback onRetry;
+  final L10n l;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = controller;
+    return GestureDetector(
+      onTap: onTapVideo,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox.expand(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (c != null && c.value.isInitialized)
+              FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: c.value.size.width,
+                  height: c.value.size.height,
+                  child: VideoPlayer(c),
+                ),
+              )
+            else if (failed)
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(l.pick('เล่นวิดีโอไม่สำเร็จ', 'Playback failed'),
+                        style: AppTheme.body(13, color: Colors.white70)),
+                    TextButton(
+                      onPressed: onRetry,
+                      child: Text(l.pick('ลองใหม่', 'Retry'),
+                          style: AppTheme.body(13, color: T.accent)),
+                    ),
+                  ],
+                ),
+              )
+            else
+              const Center(child: CircularProgressIndicator(color: T.accent)),
+
+            // paused indicator (only for the active, tappable page)
+            if (onTapVideo != null && c != null && c.value.isInitialized && !c.value.isPlaying)
+              const Center(
+                child: Icon(Icons.play_arrow_rounded, color: Colors.white70, size: 74),
+              ),
           ],
         ),
       ),
     );
   }
-
-  Widget _circleBtn(IconData icon, VoidCallback? onTap, {double size = 38}) => GestureDetector(
-        onTap: onTap,
-        child: Opacity(
-          opacity: onTap == null ? 0.35 : 1,
-          child: Container(
-            width: size,
-            height: size,
-            decoration: const BoxDecoration(color: Color(0x66000000), shape: BoxShape.circle),
-            child: Icon(icon, color: Colors.white, size: size * 0.5),
-          ),
-        ),
-      );
 }
