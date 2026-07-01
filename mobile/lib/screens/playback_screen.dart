@@ -12,6 +12,8 @@ import '../services/catalog_db.dart';
 import '../services/format.dart';
 import '../services/rongyok_client.dart';
 import '../state/app_state.dart';
+import '../state/member_state.dart';
+import '../widgets/unlock_sheet.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/ad_banner.dart';
@@ -49,6 +51,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
 
   RongYokClient? _client;
   CatalogDb? _db;
+  MemberState? _member;
+  bool _isPro = false;
 
   DateTime _lastResumeSave = DateTime.fromMillisecondsSinceEpoch(0);
   bool _advancing = false;
@@ -71,6 +75,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     if (_client == null) {
       _client = context.read<RongYokClient>();
       _db = context.read<CatalogDb>();
+      _member = context.read<MemberState>();
+      _isPro = context.read<AppState>().isPro;
       // kick off current + neighbours
       _ensure(_current);
       _ensure(_current + 1);
@@ -103,8 +109,29 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     return url;
   }
 
+  bool _locked(int index) {
+    if (index < 0 || index >= eps.length) return false;
+    final m = _member;
+    if (m == null) return false;
+    return !m.isEpisodeUnlocked(s.id, eps, eps[index], isPro: _isPro);
+  }
+
+  Future<void> _unlockAt(int index) async {
+    final ok = await showUnlockSheet(context, seriesId: s.id, episode: eps[index]);
+    if (!ok || !mounted) return;
+    setState(() {});
+    await _ensure(index);
+    if (index == _current) {
+      final c = _controllers[index];
+      c
+        ?..addListener(_onTick)
+        ..play();
+    }
+  }
+
   Future<void> _ensure(int index) async {
     if (index < 0 || index >= eps.length) return;
+    if (_locked(index)) return; // don't stream a locked episode
     if (_controllers.containsKey(index) || _loading.contains(index)) return;
     _loading.add(index);
     _failed.remove(index);
@@ -274,6 +301,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   @override
   Widget build(BuildContext context) {
     final l = context.watch<AppState>().l;
+    _isPro = context.watch<AppState>().isPro;
+    context.watch<MemberState>(); // rebuild lock overlays after unlock/login
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -286,6 +315,10 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
             itemBuilder: (_, index) => _EpisodePage(
               controller: _controllers[index],
               failed: _failed.contains(index),
+              locked: _locked(index),
+              episode: eps[index],
+              unlockCost: _member?.unlockCost ?? 5,
+              onUnlock: () => _unlockAt(index),
               onTapVideo: index == _current ? _togglePlay : null,
               onRetry: () => _ensure(index),
               l: l,
@@ -433,6 +466,10 @@ class _EpisodePage extends StatelessWidget {
   const _EpisodePage({
     required this.controller,
     required this.failed,
+    required this.locked,
+    required this.episode,
+    required this.unlockCost,
+    required this.onUnlock,
     required this.onTapVideo,
     required this.onRetry,
     required this.l,
@@ -440,6 +477,10 @@ class _EpisodePage extends StatelessWidget {
 
   final VideoPlayerController? controller;
   final bool failed;
+  final bool locked;
+  final int episode;
+  final int unlockCost;
+  final VoidCallback onUnlock;
   final VoidCallback? onTapVideo;
   final VoidCallback onRetry;
   final L10n l;
@@ -447,6 +488,44 @@ class _EpisodePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+
+    if (locked) {
+      return SizedBox.expand(
+        child: DecoratedBox(
+          decoration: const BoxDecoration(color: Color(0xFF0B0B0C)),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_rounded, color: T.accent, size: 56),
+                const SizedBox(height: 14),
+                Text('${l.pick('ตอนที่', 'EP')} $episode ${l.pick('ถูกล็อก', 'locked')}',
+                    style: AppTheme.display(18, weight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(height: 6),
+                Text(l.pick('ดูฟรี 3 ตอนแรก · ตอนถัดไปใช้เหรียญ', 'First 3 free · unlock with coins'),
+                    style: AppTheme.body(12.5, color: Colors.white70)),
+                const SizedBox(height: 18),
+                GestureDetector(
+                  onTap: onUnlock,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                    decoration: BoxDecoration(
+                        gradient: T.accentGradient, borderRadius: BorderRadius.circular(T.rButton)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.lock_open_rounded, color: T.onAccent, size: 18),
+                      const SizedBox(width: 8),
+                      Text('${l.pick('ปลดล็อก', 'Unlock')} · $unlockCost ${l.pick('เหรียญ', 'coins')}',
+                          style: AppTheme.display(14, weight: FontWeight.w700, color: T.onAccent)),
+                    ]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return GestureDetector(
       onTap: onTapVideo,
       behavior: HitTestBehavior.opaque,

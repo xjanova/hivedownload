@@ -8,12 +8,16 @@ import 'package:video_player/video_player.dart';
 import '../l10n/l10n.dart';
 import '../models/series.dart';
 import '../services/catalog_db.dart';
+import '../services/netwix_client.dart';
 import '../services/rongyok_client.dart';
+import '../widgets/comment_sheet.dart';
 import '../state/app_state.dart';
+import '../state/member_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
 import '../widgets/poster_image.dart';
+import '../widgets/unlock_sheet.dart';
 import 'playback_screen.dart';
 
 /// 03 — Content Preview / Series Detail · รายละเอียด. Stream-only: pick a title,
@@ -37,12 +41,25 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   bool _previewStarted = false;
   bool _muted = false;
 
+  // Social (netwix.online-backed; local-optimistic until live).
+  bool _liked = false;
+  int _likes = 0;
+
   Series get s => widget.series;
 
   @override
   void initState() {
     super.initState();
     _loadEpisodes();
+  }
+
+  Future<void> _toggleLike() async {
+    setState(() {
+      _liked = !_liked;
+      _likes += _liked ? 1 : -1;
+      if (_likes < 0) _likes = 0;
+    });
+    await context.read<NetwixClient>().toggleLike(s.id); // graceful until live
   }
 
   @override
@@ -143,7 +160,20 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   }
 
   Future<void> _play(int ep) async {
+    final member = context.read<MemberState>();
+    final isPro = context.read<AppState>().isPro;
+
+    // Gate: free for first 3 / Pro / already unlocked, else prompt to unlock.
+    if (!member.isEpisodeUnlocked(s.id, _episodes, ep, isPro: isPro)) {
+      _preview?.pause();
+      final unlocked = await showUnlockSheet(context, seriesId: s.id, episode: ep);
+      if (!mounted) return;
+      _preview?.play();
+      if (!unlocked) return;
+    }
+
     _preview?.pause();
+    if (!mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => PlaybackScreen(series: s, episodes: _episodes, startEpisode: ep),
     ));
@@ -182,7 +212,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               ),
               SliverList.builder(
                 itemCount: _episodes.length,
-                itemBuilder: (_, i) => _episodeRow(l, _episodes[i]),
+                itemBuilder: (_, i) => _episodeRow(l, _episodes[i], i),
               ),
               const SliverToBoxAdapter(child: SizedBox(height: 24)),
             ],
@@ -315,6 +345,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               style: AppTheme.display(23, weight: FontWeight.w700)),
           const SizedBox(height: 6),
           Text(metaText, style: AppTheme.body(12.5, color: T.textMuted)),
+          const SizedBox(height: 12),
+          _socialBar(l),
           if (s.description.trim().isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(s.description, style: AppTheme.body(13.5, color: T.textSecondary, height: 1.5)),
@@ -324,7 +356,40 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     );
   }
 
-  Widget _episodeRow(L10n l, int ep) {
+  Widget _socialBar(L10n l) {
+    Widget btn(IconData icon, String label, VoidCallback onTap, {Color? color}) => GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0x0DFFFFFF),
+              borderRadius: BorderRadius.circular(100),
+              border: Border.all(color: T.hairline),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(icon, size: 18, color: color ?? T.textSecondary),
+              const SizedBox(width: 6),
+              Text(label, style: AppTheme.body(12.5, weight: FontWeight.w600, color: color ?? T.textSecondary)),
+            ]),
+          ),
+        );
+
+    return Row(children: [
+      btn(_liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          _likes > 0 ? '$_likes' : l.pick('ถูกใจ', 'Like'), _toggleLike,
+          color: _liked ? const Color(0xFFF2705A) : null),
+      const SizedBox(width: 10),
+      btn(Icons.mode_comment_outlined, l.pick('คอมเมนต์', 'Comment'),
+          () => showCommentSheet(context, s.id)),
+    ]);
+  }
+
+  Widget _episodeRow(L10n l, int ep, int index) {
+    final member = context.watch<MemberState>();
+    final isPro = context.watch<AppState>().isPro;
+    final unlocked = member.isEpisodeUnlocked(s.id, _episodes, ep, isPro: isPro);
+    final free = index < 3;
+
     return InkWell(
       onTap: () => _play(ep),
       child: Padding(
@@ -340,7 +405,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                   fit: StackFit.expand,
                   children: [
                     PosterImage(url: s.displayImageUrl, seed: s.id + ep, radius: 8),
-                    const Center(child: Icon(Icons.play_arrow_rounded, size: 18, color: Colors.white70)),
+                    Center(
+                      child: Icon(unlocked ? Icons.play_arrow_rounded : Icons.lock_rounded,
+                          size: 18, color: Colors.white70),
+                    ),
                   ],
                 ),
               ),
@@ -352,11 +420,22 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                 children: [
                   Text('${l.pick('ตอนที่', 'EP')} $ep',
                       style: AppTheme.body(14, weight: FontWeight.w600, color: T.textPrimary)),
-                  Text(l.pick('ดูฟรี', 'Free'), style: AppTheme.body(11.5, color: T.textFaint)),
+                  Text(
+                    free
+                        ? l.pick('ดูฟรี', 'Free')
+                        : unlocked
+                            ? l.pick('ปลดล็อกแล้ว', 'Unlocked')
+                            : '${l.pick('ปลดล็อก', 'Unlock')} · ${member.unlockCost} ${l.pick('เหรียญ', 'coins')}',
+                    style: AppTheme.body(11.5, color: unlocked ? T.textFaint : T.accent),
+                  ),
                 ],
               ),
             ),
-            const Icon(Icons.play_circle_outline_rounded, color: T.textMuted, size: 20),
+            Icon(
+              unlocked ? Icons.play_circle_outline_rounded : Icons.lock_outline_rounded,
+              color: unlocked ? T.textMuted : T.accent,
+              size: 20,
+            ),
           ],
         ),
       ),

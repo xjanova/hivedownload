@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
+import '../services/auth_service.dart';
 import '../services/settings_store.dart';
 import '../state/app_state.dart';
+import '../state/member_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import 'earn_coins_screen.dart';
 import 'go_pro_screen.dart';
 import 'whats_new_screen.dart';
 
@@ -25,7 +28,9 @@ class MenuScreen extends StatelessWidget {
       children: [
         Text(l.bi('เมนู', 'Menu'), style: AppTheme.display(21, weight: FontWeight.w700)),
         const SizedBox(height: 16),
-        _profileCard(context, app),
+        _accountCard(context, app),
+        const SizedBox(height: 12),
+        _coinsRow(context, l),
         const SizedBox(height: 16),
         _languageRow(context, app),
         const SizedBox(height: 8),
@@ -40,8 +45,42 @@ class MenuScreen extends StatelessWidget {
     );
   }
 
-  Widget _profileCard(BuildContext context, AppState app) {
+  Widget _accountCard(BuildContext context, AppState app) {
     final l = app.l;
+    final member = context.watch<MemberState>();
+
+    if (!member.isLoggedIn) {
+      return GlassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const HexAvatar(size: 46, child: Icon(Icons.person_outline_rounded, color: T.accentHi, size: 22)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(l.pick('ยังไม่ได้เข้าสู่ระบบ', 'Not signed in'),
+                        style: AppTheme.body(14.5, weight: FontWeight.w700, color: T.textPrimary)),
+                    Text(l.pick('เข้าสู่ระบบครั้งแรก รับ 10 เหรียญฟรี', 'Sign in — 10 free coins'),
+                        style: AppTheme.body(11.5, color: T.accent)),
+                  ],
+                ),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(child: _loginBtn(context, 'Google', Icons.g_mobiledata_rounded, AuthProvider.google)),
+              const SizedBox(width: 10),
+              Expanded(child: _loginBtn(context, 'LINE', Icons.chat_bubble_rounded, AuthProvider.line)),
+            ]),
+          ],
+        ),
+      );
+    }
+
+    final m = member.member!;
     return GlassCard(
       child: Row(
         children: [
@@ -51,15 +90,63 @@ class MenuScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(l.pick('ผู้ใช้ทั่วไป', 'Guest'),
-                    style: AppTheme.body(15, weight: FontWeight.w700, color: T.textPrimary)),
-                Text(app.isPro ? l.bi('แผน Pro', 'Pro plan') : l.bi('แผนฟรี', 'Free plan'),
+                Text(m.name, style: AppTheme.body(15, weight: FontWeight.w700, color: T.textPrimary)),
+                Text('${m.provider.toUpperCase()} · ${app.isPro ? l.pick('แผน Pro', 'Pro') : l.pick('แผนฟรี', 'Free')}',
                     style: AppTheme.body(12, color: T.textMuted)),
               ],
             ),
           ),
           if (app.isPro) const Pill(text: 'PRO', filled: true),
+          IconButton(
+            onPressed: () => member.logout(),
+            icon: const Icon(Icons.logout_rounded, size: 18, color: T.textFaint),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _loginBtn(BuildContext context, String label, IconData icon, AuthProvider p) {
+    return GestureDetector(
+      onTap: () => context.read<MemberState>().login(p),
+      child: Container(
+        height: 44,
+        decoration: BoxDecoration(gradient: T.accentGradient, borderRadius: BorderRadius.circular(T.rButton)),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, size: 20, color: T.onAccent),
+          const SizedBox(width: 6),
+          Text(label, style: AppTheme.body(13, weight: FontWeight.w700, color: T.onAccent)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _coinsRow(BuildContext context, L10n l) {
+    final member = context.watch<MemberState>();
+    return GestureDetector(
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EarnCoinsScreen())),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(color: T.accentSoft, borderRadius: BorderRadius.circular(T.rCard)),
+        child: Row(
+          children: [
+            const HexIcon(icon: Icons.monetization_on_rounded, size: 34),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(l.bi('เหรียญของฉัน', 'My coins'),
+                  style: AppTheme.body(14, weight: FontWeight.w600, color: T.textPrimary)),
+            ),
+            Text('${member.coins}',
+                style: AppTheme.display(18, weight: FontWeight.w700, color: T.accent)),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(gradient: T.accentGradient, borderRadius: BorderRadius.circular(100)),
+              child: Text(l.pick('หาเหรียญ', 'Earn'),
+                  style: AppTheme.body(11.5, weight: FontWeight.w700, color: T.onAccent)),
+            ),
+          ],
+        ),
       ),
     );
   }
