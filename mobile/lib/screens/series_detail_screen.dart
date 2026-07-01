@@ -44,12 +44,20 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   bool _liked = false;
   int _likes = 0;
 
+  // Scroll-over-preview effect: content rises over the video, which fades +
+  // parallaxes away instead of a hard edge.
+  final ScrollController _scroll = ScrollController();
+  double _off = 0;
+
   Series get s => widget.series;
 
   @override
   void initState() {
     super.initState();
     _loadEpisodes();
+    _scroll.addListener(() {
+      if (mounted) setState(() => _off = _scroll.offset);
+    });
   }
 
   Future<void> _toggleLike() async {
@@ -63,6 +71,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
 
   @override
   void dispose() {
+    _scroll.dispose();
     _preview?.dispose();
     super.dispose();
   }
@@ -183,34 +192,50 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   Widget build(BuildContext context) {
     final l = context.watch<AppState>().l;
 
+    final size = MediaQuery.of(context).size;
+    final heroH = (size.height * 0.56).clamp(340.0, 580.0);
+    // 0 at top → 1 once scrolled ~65% of the hero. Drives fade + parallax.
+    final t = (_off / (heroH * 0.65)).clamp(0.0, 1.0);
+
     return Scaffold(
       body: DecoratedBox(
         decoration: T.screenBackground,
-        child: Column(
+        child: Stack(
           children: [
-            // Fixed preview — stays put while the episode list scrolls.
-            _hero(l),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: T.accent))
-                  : _error != null
-                      ? _errorRow(l)
-                      : ListView(
-                          padding: const EdgeInsets.only(bottom: 24),
-                          children: [
-                            _meta(l),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-                              child: SectionHeader(
-                                title: l.bi('ตอนทั้งหมด', 'Episodes'),
-                                trailing: '${_episodes.length} ${l.pick('ตอน', 'eps')}',
-                              ),
-                            ),
-                            for (var i = 0; i < _episodes.length; i++)
-                              _episodeRow(l, _episodes[i], i),
-                          ],
-                        ),
+            // Background preview: fades + gently parallaxes as content rises over it.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: heroH,
+              child: Opacity(
+                opacity: (1 - t).clamp(0.0, 1.0),
+                child: Transform.translate(
+                  offset: Offset(0, -_off * 0.25),
+                  child: _heroBg(l, heroH),
+                ),
+              ),
             ),
+
+            // Foreground content that scrolls UP over the preview.
+            Positioned.fill(
+              child: ListView(
+                controller: _scroll,
+                padding: EdgeInsets.zero,
+                children: [
+                  // Transparent gap so the preview shows; tap it to play EP1.
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _episodes.isEmpty ? null : () => _play(_episodes.first),
+                    child: SizedBox(height: heroH - 96),
+                  ),
+                  _contentSheet(l),
+                ],
+              ),
+            ),
+
+            // Pinned controls (back always; free/mute fade with scroll).
+            _topBar(l, t),
           ],
         ),
       ),
@@ -228,11 +253,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     );
   }
 
-  Widget _hero(L10n l) {
+  /// The background preview layer (video/poster + right-side cover + scrims).
+  Widget _heroBg(L10n l, double height) {
     final preview = _preview;
     final showPreview = _previewReady && preview != null && preview.value.isInitialized;
-    // Fixed cinematic header — fills the phone width, leaves room for the list.
-    final height = (MediaQuery.of(context).size.height * 0.5).clamp(320.0, 560.0);
 
     return SizedBox(
       height: height,
@@ -240,7 +264,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Full-screen-width preview (BoxFit.cover) or poster until ready.
           if (showPreview)
             FittedBox(
               fit: BoxFit.cover,
@@ -254,18 +277,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           else
             PosterImage(url: s.displayImageUrl, seed: s.id, radius: 0),
 
-          // Fade the bottom half into the app background (from 50% down).
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.transparent, T.screen],
-                stops: [0.0, 0.5, 1.0],
-              ),
-            ),
-          ),
-          // subtle top scrim for the status-bar controls
+          // top scrim for the status-bar controls
           const DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -277,35 +289,19 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
             ),
           ),
 
-          // tap the preview to open the full-screen player at EP1
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _episodes.isEmpty ? null : () => _play(_episodes.first),
-              child: Align(
-                alignment: const Alignment(0, -0.15),
-                child: AnimatedOpacity(
-                  opacity: showPreview ? 0 : 1,
-                  duration: const Duration(milliseconds: 300),
-                  child: Container(
-                    width: 62,
-                    height: 62,
-                    decoration: BoxDecoration(
-                      gradient: T.accentGradient,
-                      shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: T.accentGlow, blurRadius: 24, spreadRadius: -4)],
-                    ),
-                    child: const Icon(Icons.play_arrow_rounded, color: T.onAccent, size: 34),
-                  ),
-                ),
+          // centered play hint (only before the preview is playing)
+          if (!showPreview)
+            const Align(
+              alignment: Alignment(0, -0.12),
+              child: IgnorePointer(
+                child: Icon(Icons.play_circle_fill_rounded, color: Colors.white70, size: 64),
               ),
             ),
-          ),
 
-          // The cover poster, kept visible on the right.
+          // cover poster on the right
           Positioned(
             right: 14,
-            bottom: 34,
+            bottom: 30,
             child: Container(
               width: 104,
               height: 156,
@@ -320,28 +316,81 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               child: PosterImage(url: s.displayImageUrl, seed: s.id, radius: 12),
             ),
           ),
-
-          // top controls
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Row(
-                children: [
-                  _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
-                  const SizedBox(width: 8),
-                  Pill(text: l.pick('ดูฟรี', 'FREE'), filled: true),
-                  const Spacer(),
-                  if (showPreview)
-                    _circleBtn(
-                      _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                      _toggleMute,
-                    ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
+    );
+  }
+
+  Widget _topBar(L10n l, double t) {
+    final showPreview = _previewReady && _preview != null && _preview!.value.isInitialized;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Row(
+          children: [
+            _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
+            const SizedBox(width: 8),
+            Opacity(opacity: (1 - t).clamp(0.0, 1.0), child: Pill(text: l.pick('ดูฟรี', 'FREE'), filled: true)),
+            const Spacer(),
+            if (showPreview)
+              Opacity(
+                opacity: (1 - t).clamp(0.0, 1.0),
+                child: _circleBtn(
+                  _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                  _toggleMute,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The content that rises over the preview — soft gradient top (no hard edge).
+  Widget _contentSheet(L10n l) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // gradient so the sheet melts over the video instead of cutting it
+        Container(
+          height: 96,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.transparent, T.screen],
+              stops: [0.0, 0.9],
+            ),
+          ),
+        ),
+        ColoredBox(
+          color: T.screen,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 28),
+            child: _loading
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: Center(child: CircularProgressIndicator(color: T.accent)),
+                  )
+                : _error != null
+                    ? _errorRow(l)
+                    : Column(
+                        children: [
+                          _meta(l),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+                            child: SectionHeader(
+                              title: l.bi('ตอนทั้งหมด', 'Episodes'),
+                              trailing: '${_episodes.length} ${l.pick('ตอน', 'eps')}',
+                            ),
+                          ),
+                          for (var i = 0; i < _episodes.length; i++)
+                            _episodeRow(l, _episodes[i], i),
+                        ],
+                      ),
+          ),
+        ),
+      ],
     );
   }
 
