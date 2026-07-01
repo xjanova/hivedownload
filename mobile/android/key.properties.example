@@ -1,0 +1,7 @@
+# Copy to android/key.properties and fill in for LOCAL release signing.
+# In CI these values come from GitHub Secrets (see .github/workflows/android-release.yml).
+# NEVER commit the real key.properties or the .jks keystore.
+storePassword=your-keystore-password
+keyPassword=your-key-password
+keyAlias=upload
+storeFile=upload-keystore.jks

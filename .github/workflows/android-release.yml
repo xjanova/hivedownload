@@ -1,0 +1,110 @@
+name: Android Release
+
+# Builds the Flutter app in mobile/ into a signed release APK and publishes a
+# GitHub Release with the APK attached. The in-app updater (AutoUpdater) reads
+# that release to offer over-the-air updates.
+#
+# pubspec.yaml `version: X.Y.Z+B` is the SINGLE SOURCE OF TRUTH:
+#   versionName = X.Y.Z   versionCode = B   git tag = vX.Y.Z+B
+#
+# Triggered by:
+#   • push of a tag  v*                                     (manual release)
+#   • workflow_dispatch { tag }  — used by auto-version-bump.yml, because a tag
+#     pushed with the default GITHUB_TOKEN does NOT fire a tag event
+#     (see brain: "Flutter auto-update silently misses build-only releases").
+#
+# Required GitHub Secrets for a user-updatable (properly signed) build:
+#   RELEASE_KEYSTORE_BASE64  base64 of upload-keystore.jks
+#   RELEASE_STORE_PASSWORD / RELEASE_KEY_PASSWORD / RELEASE_KEY_ALIAS
+# Without them the APK is debug-signed (smoke-test only — cannot auto-update users).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build & release, e.g. v1.0.1+2'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.7'
+          channel: stable
+          cache: true
+
+      - name: Read version from pubspec (single source of truth)
+        id: ver
+        run: |
+          RAW=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | tr -d ' \r')
+          NAME="${RAW%%+*}"
+          BUILD="${RAW##*+}"
+          [ "$BUILD" = "$RAW" ] && BUILD="${{ github.run_number }}"
+          echo "name=$NAME"   >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Building $NAME+$BUILD from tag ${{ steps.tag.outputs.tag }}"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Configure release signing
+        run: |
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > android/upload-keystore.jks
+            cat > android/key.properties <<EOF
+          storePassword=${{ secrets.RELEASE_STORE_PASSWORD }}
+          keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}
+          keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
+            echo "Release keystore configured."
+          else
+            echo "::warning::No RELEASE_KEYSTORE_BASE64 secret — APK will be debug-signed and cannot auto-update users."
+          fi
+
+      - name: Build release APK
+        run: >
+          flutter build apk --release
+          --build-name=${{ steps.ver.outputs.name }}
+          --build-number=${{ steps.ver.outputs.build }}
+
+      - name: Stage APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk hivedownload-${{ steps.ver.outputs.name }}.apk
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hivedownload-apk
+          path: mobile/hivedownload-*.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          files: mobile/hivedownload-*.apk
+          generate_release_notes: true
+          fail_on_unmatched_files: true
