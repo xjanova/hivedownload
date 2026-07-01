@@ -153,6 +153,13 @@ class CatalogDb {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Drops a cached URL (e.g. it turned out to be dead) so the next play
+  /// re-resolves a fresh one.
+  Future<void> invalidateVideoUrl(int seriesId, int ep) async {
+    await _db.delete('video_cache',
+        where: 'series_id = ? AND episode_number = ?', whereArgs: [seriesId, ep]);
+  }
+
   // ---------------------------------------------------------------- resume
 
   Future<void> saveResume(int seriesId, int ep, int positionSec, int durationSec) async {

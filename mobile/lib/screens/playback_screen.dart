@@ -48,6 +48,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   final Map<int, VideoPlayerController> _controllers = {};
   final Set<int> _loading = {};
   final Set<int> _failed = {};
+  final Set<int> _retried = {}; // one fresh-URL retry per episode
 
   RongYokClient? _client;
   CatalogDb? _db;
@@ -169,6 +170,15 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
       if (mounted) setState(() {});
     } catch (e) {
       _loading.remove(index);
+      // A cached URL may have expired/died — drop it and re-resolve once.
+      if (!_retried.contains(index)) {
+        _retried.add(index);
+        await _db?.invalidateVideoUrl(s.id, eps[index]);
+        if (mounted) {
+          await _ensure(index);
+          return;
+        }
+      }
       _failed.add(index);
       if (mounted) setState(() {});
     }
