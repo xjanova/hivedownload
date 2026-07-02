@@ -51,6 +51,14 @@ public sealed partial class RongYokClient : IMediaSource
     [GeneratedRegex(@"""episodes_count""\s*:\s*(\d+)", RegexOptions.Compiled)]
     private static partial Regex EpisodesCountPattern();
 
+    // rongyok rotates the video-resolve endpoint filename (embedded in /watch/watch.js); this
+    // captures it, tolerating escaped slashes and other query params appearing before series_id.
+    [GeneratedRegex(@"/watch/([a-z0-9_]{4,})\.php\?[^""'`\s]*series_id", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex EndpointPattern();
+
+    [GeneratedRegex(@"[?&]ex=([0-9a-f]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    private static partial Regex ExPattern();
+
     // ------------------------------------------------------------- 1. catalog
 
     /// <summary>Downloads and parses the full catalog (~2,300+ series) — one page, whole catalogue.</summary>
@@ -171,31 +179,116 @@ public sealed partial class RongYokClient : IMediaSource
             : new StreamInfo { Kind = StreamKind.Mp4Progressive, Url = url };
     }
 
-    /// <summary>Resolves the direct (Discord CDN) MP4 URL for one episode. Null if unavailable.</summary>
+    private const string EndpointFallback = "get_video.php";
+    private static string? _cachedEndpoint;
+    private static DateTime _endpointCachedAtUtc;
+
+    /// <summary>
+    /// Resolves the direct (Discord CDN) MP4 URL for one episode. Null if unavailable.
+    ///
+    /// rongyok rotates the resolver endpoint filename to deter scrapers — the old get_video.php is
+    /// now a dead alias that hands back already-expired URLs, which is why downloads stopped working.
+    /// The current name lives in /watch/watch.js. We discover it, cache ~1h, reject expired
+    /// signatures, and re-discover once if the cached endpoint has rotated.
+    /// </summary>
     public async Task<string?> GetVideoUrlAsync(int seriesId, int ep, CancellationToken ct = default)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Get,
-            $"{BaseUrl}/watch/get_video.php?series_id={seriesId}&ep={ep}");
-        req.Headers.Referrer = new Uri($"{BaseUrl}/watch/?series_id={seriesId}&ep={ep}");
-        req.Headers.Add("X-Requested-With", "XMLHttpRequest");
+        string? cached = CachedEndpoint();
+        string endpoint = cached ?? await DiscoverEndpointAsync(ct);
+        if (cached is null) CacheEndpoint(endpoint);
 
-        using var resp = await _http.SendAsync(req, ct);
-        resp.EnsureSuccessStatusCode();
-        string body = await resp.Content.ReadAsStringAsync(ct);
+        string? url = await CallResolveAsync(endpoint, seriesId, ep, ct);
+        if (url is not null) return url;
 
+        // Only a cached endpoint can be stale-due-to-rotation — re-discover once and retry if changed.
+        if (cached is not null)
+        {
+            string fresh = await DiscoverEndpointAsync(ct);
+            CacheEndpoint(fresh);
+            if (fresh != endpoint)
+                return await CallResolveAsync(fresh, seriesId, ep, ct);
+        }
+
+        return null;
+    }
+
+    private static string? CachedEndpoint()
+        => _cachedEndpoint is not null && DateTime.UtcNow - _endpointCachedAtUtc < TimeSpan.FromHours(1)
+            ? _cachedEndpoint
+            : null;
+
+    private static void CacheEndpoint(string endpoint)
+    {
+        _cachedEndpoint = endpoint;
+        _endpointCachedAtUtc = DateTime.UtcNow;
+    }
+
+    /// <summary>Read the current resolver endpoint filename from /watch/watch.js (fallback: legacy get_video.php).</summary>
+    private async Task<string> DiscoverEndpointAsync(CancellationToken ct)
+    {
         try
         {
+            string js = (await _http.GetStringAsync($"{BaseUrl}/watch/watch.js", ct)).Replace("\\/", "/");
+            var m = EndpointPattern().Match(js);
+            if (m.Success)
+                return m.Groups[1].Value + ".php";
+        }
+        catch
+        {
+            // fall through to the legacy endpoint
+        }
+
+        return EndpointFallback;
+    }
+
+    private async Task<string?> CallResolveAsync(string endpoint, int seriesId, int ep, CancellationToken ct)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get,
+                $"{BaseUrl}/watch/{endpoint}?series_id={seriesId}&ep={ep}");
+            req.Headers.Referrer = new Uri($"{BaseUrl}/watch/?series_id={seriesId}&ep={ep}");
+            req.Headers.Add("X-Requested-With", "XMLHttpRequest");
+
+            using var resp = await _http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode)
+                return null;
+            string body = await resp.Content.ReadAsStringAsync(ct);
+
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
             bool ok = root.TryGetProperty("ok", out var okEl) &&
                       (okEl.ValueKind == JsonValueKind.True ||
                        (okEl.ValueKind == JsonValueKind.String && okEl.GetString() == "true"));
-            if (!ok) return null;
-            return root.TryGetProperty("video_url", out var u) ? u.GetString() : null;
+            if (!ok)
+                return null;
+
+            string? url = root.TryGetProperty("video_url", out var u) ? u.GetString() : null;
+
+            // A stale endpoint hands back an already-expired signature — reject it so the caller
+            // re-discovers the rotated endpoint instead of downloading a dead URL.
+            return !string.IsNullOrEmpty(url) && UrlIsFresh(url) ? url : null;
         }
-        catch (JsonException)
+        catch
         {
             return null;
+        }
+    }
+
+    /// <summary>Discord signed URLs carry ?ex=&lt;hex unix seconds&gt;; a past ex means it's already dead.</summary>
+    private static bool UrlIsFresh(string url)
+    {
+        var m = ExPattern().Match(url);
+        if (!m.Success)
+            return true;   // no ex → can't tell, assume usable
+        try
+        {
+            long ex = Convert.ToInt64(m.Groups[1].Value, 16);
+            return ex > DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 60;   // small clock-skew buffer
+        }
+        catch
+        {
+            return true;
         }
     }
 
