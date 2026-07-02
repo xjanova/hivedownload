@@ -1,15 +1,13 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../l10n/l10n.dart';
-import '../models/series.dart';
-import '../services/catalog_db.dart';
+import '../models/content.dart';
+import '../models/episode.dart';
+import '../services/netwix_api.dart';
 import '../services/netwix_client.dart';
 import '../services/reward_config.dart';
-import '../services/rongyok_client.dart';
 import '../widgets/comment_sheet.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
@@ -20,18 +18,20 @@ import '../widgets/poster_image.dart';
 import '../widgets/unlock_sheet.dart';
 import 'playback_screen.dart';
 
-/// 03 — Content Preview / Series Detail · รายละเอียด. Stream-only: pick a title,
-/// browse episodes, tap to watch. Everything is free.
+/// 03 — Content Preview / Detail · รายละเอียด. Loads the title + episode list
+/// from NetWix, autoplays EP1 as an ambient preview, and opens the full-screen
+/// player on tap.
 class SeriesDetailScreen extends StatefulWidget {
-  const SeriesDetailScreen({super.key, required this.series});
-  final Series series;
+  const SeriesDetailScreen({super.key, required this.content});
+  final Content content;
 
   @override
   State<SeriesDetailScreen> createState() => _SeriesDetailScreenState();
 }
 
 class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
-  List<int> _episodes = [];
+  Content _content = const Content(id: 0, slug: '', title: '');
+  List<Episode> _episodes = [];
   bool _loading = true;
   String? _error;
 
@@ -45,12 +45,13 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   bool _liked = false;
   int _likes = 0;
 
-  Series get s => widget.series;
+  Content get c => _content;
 
   @override
   void initState() {
     super.initState();
-    _loadEpisodes();
+    _content = widget.content;
+    _load();
   }
 
   Future<void> _toggleLike() async {
@@ -59,7 +60,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       _likes += _liked ? 1 : -1;
       if (_likes < 0) _likes = 0;
     });
-    await context.read<NetwixClient>().toggleLike(s.id); // graceful until live
+    await context.read<NetwixClient>().toggleLike(c.id); // graceful until live
   }
 
   @override
@@ -68,102 +69,101 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     super.dispose();
   }
 
-  Future<void> _loadEpisodes() async {
+  Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
-    final client = context.read<RongYokClient>();
-    final db = context.read<CatalogDb>();
-
-    // 1) instant paint from the cached episode list
+    final api = context.read<NetwixApi>();
     try {
-      final cached = await db.getEpisodes(s.id);
-      if (mounted && cached.isNotEmpty) {
+      final detail = await api.fetchDetail(widget.content.slug);
+      if (!mounted) return;
+      if (detail == null) {
         setState(() {
-          _episodes = cached;
-          s.episodesCount = cached.length;
+          _error = 'โหลดรายละเอียดไม่สำเร็จ';
           _loading = false;
         });
-        _maybeStartPreview();
+        return;
       }
-    } catch (_) {/* ignore cache errors */}
-
-    // 2) refresh from the network, then persist
-    try {
-      final nums = await client.fetchEpisodeNumbers(s.id);
-      if (!mounted) return;
       setState(() {
-        _episodes = nums;
-        s.episodesCount = nums.length;
+        _content = detail.content;
+        _episodes = detail.episodes;
         _loading = false;
         _error = null;
       });
       _maybeStartPreview();
-      unawaited(db.upsertEpisodes(s.id, nums));
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        if (_episodes.isEmpty) _error = 'โหลดรายชื่อตอนไม่สำเร็จ';
+        if (_episodes.isEmpty) _error = 'โหลดรายละเอียดไม่สำเร็จ';
         _loading = false;
       });
     }
   }
 
   void _maybeStartPreview() {
-    if (!_previewStarted && _episodes.isNotEmpty) {
-      _startPreview(_episodes.first);
-    }
+    if (_previewStarted || _episodes.isEmpty) return;
+    // Preview the first playable (mirrored) episode.
+    final ep = _episodes.firstWhere(
+      (e) => e.isMirrored && !e.isUnavailable,
+      orElse: () => _episodes.first,
+    );
+    _startPreview(ep);
   }
 
-  Future<void> _startPreview(int ep) async {
+  Future<void> _startPreview(Episode ep) async {
     if (_previewStarted) return;
     _previewStarted = true;
 
-    final db = context.read<CatalogDb>();
-    final client = context.read<RongYokClient>();
+    final api = context.read<NetwixApi>();
     try {
-      var url = await db.freshVideoUrl(s.id, ep);
-      if (url == null) {
-        url = await client.getVideoUrl(s.id, ep);
-        if (url != null) unawaited(db.cacheVideoUrl(s.id, ep, url));
-      }
-      if (url == null || !mounted) return;
+      final src = await api.resolveSource(ep.id);
+      final url = src?.url;
+      if (url == null || src?.ready != true || !mounted) return;
 
-      final c = VideoPlayerController.networkUrl(Uri.parse(url));
-      await c.initialize();
+      final ctrl = VideoPlayerController.networkUrl(Uri.parse(url));
+      await ctrl.initialize();
       if (!mounted) {
-        await c.dispose();
+        await ctrl.dispose();
         return;
       }
-      await c.setLooping(true);
-      await c.setVolume(_muted ? 0 : 1);
-      await c.play();
+      await ctrl.setLooping(true);
+      await ctrl.setVolume(_muted ? 0 : 1);
+      await ctrl.play();
       setState(() {
-        _preview = c;
+        _preview = ctrl;
         _previewReady = true;
       });
     } catch (_) {/* preview is best-effort — fall back to the poster */}
   }
 
   void _toggleMute() {
-    final c = _preview;
-    if (c == null) return;
+    final ctrl = _preview;
+    if (ctrl == null) return;
     setState(() {
       _muted = !_muted;
-      c.setVolume(_muted ? 0 : 1);
+      ctrl.setVolume(_muted ? 0 : 1);
     });
   }
 
-  Future<void> _play(int ep) async {
+  Future<void> _play(int index) async {
+    if (index < 0 || index >= _episodes.length) return;
+    final ep = _episodes[index];
+    if (ep.isUnavailable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ตอนนี้ยังไม่พร้อมให้ชม')),
+      );
+      return;
+    }
+
     final member = context.read<MemberState>();
     final isPro = context.read<AppState>().isPro;
 
-    // Gate: free for first 3 / Pro / already unlocked, else prompt to unlock.
-    if (!member.isEpisodeUnlocked(s.id, _episodes, ep, isPro: isPro)) {
+    // Gate: free for first N / Pro / already unlocked, else prompt to unlock.
+    if (!member.isEpisodeUnlocked(c.id, ep.id, index, isPro: isPro)) {
       _preview?.pause();
-      final unlocked = await showUnlockSheet(context, seriesId: s.id, episode: ep);
+      final unlocked = await showUnlockSheet(context, seriesId: c.id, episode: ep.number);
       if (!mounted) return;
       _preview?.play();
       if (!unlocked) return;
@@ -172,7 +172,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     _preview?.pause();
     if (!mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PlaybackScreen(series: s, episodes: _episodes, startEpisode: ep),
+      builder: (_) => PlaybackScreen(content: c, episodes: _episodes, startEpisodeId: ep.id),
     ));
     if (mounted) _preview?.play();
   }
@@ -226,7 +226,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                 label: l.bi('เล่นตอนที่ 1', 'Play EP1'),
                 icon: Icons.play_arrow_rounded,
                 height: 54,
-                onPressed: () => _play(_episodes.first),
+                onPressed: () => _play(0),
               ),
             ),
     );
@@ -256,7 +256,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
               ),
             )
           else
-            PosterImage(url: s.displayImageUrl, seed: s.id, radius: 0),
+            PosterImage(url: c.heroImageUrl, seed: c.id, radius: 0),
 
           // bottom fade into the app background + top scrim
           const DecoratedBox(
@@ -274,7 +274,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: _episodes.isEmpty ? null : () => _play(_episodes.first),
+              onTap: _episodes.isEmpty ? null : () => _play(0),
               child: Align(
                 alignment: const Alignment(0, -0.1),
                 child: showPreview
@@ -299,7 +299,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                 ],
               ),
               clipBehavior: Clip.antiAlias,
-              child: PosterImage(url: s.displayImageUrl, seed: s.id, radius: 12),
+              child: PosterImage(url: c.displayImageUrl, seed: c.id, radius: 12),
             ),
           ),
 
@@ -329,8 +329,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
 
   Widget _meta(L10n l) {
     final metaText = [
-      if (s.yearText.isNotEmpty) s.yearText,
-      s.typeThai,
+      if (c.yearText.isNotEmpty) c.yearText,
+      c.typeThai,
       if (_episodes.isNotEmpty) '${_episodes.length} ${l.pick('ตอน', 'eps')}',
       'HD · ${l.pick('สตรีม', 'Stream')}',
     ].join('  ·  ');
@@ -340,15 +340,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(s.cleanTitle.isEmpty ? s.title : s.cleanTitle,
-              style: AppTheme.display(23, weight: FontWeight.w700)),
+          Text(c.title, style: AppTheme.display(23, weight: FontWeight.w700)),
           const SizedBox(height: 6),
           Text(metaText, style: AppTheme.body(12.5, color: T.textMuted)),
           const SizedBox(height: 12),
           _socialBar(l),
-          if (s.description.trim().isNotEmpty) ...[
+          if (c.synopsis.trim().isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text(s.description, style: AppTheme.body(13.5, color: T.textSecondary, height: 1.5)),
+            Text(c.synopsis, style: AppTheme.body(13.5, color: T.textSecondary, height: 1.5)),
           ],
         ],
       ),
@@ -379,63 +378,83 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           color: _liked ? const Color(0xFFF2705A) : null),
       const SizedBox(width: 10),
       btn(Icons.mode_comment_outlined, l.pick('คอมเมนต์', 'Comment'),
-          () => showCommentSheet(context, s.id)),
+          () => showCommentSheet(context, c.id)),
     ]);
   }
 
-  Widget _episodeRow(L10n l, int ep, int index) {
+  Widget _episodeRow(L10n l, Episode ep, int index) {
     final member = context.watch<MemberState>();
     final isPro = context.watch<AppState>().isPro;
-    final unlocked = member.isEpisodeUnlocked(s.id, _episodes, ep, isPro: isPro);
+    final unlocked = member.isEpisodeUnlocked(c.id, ep.id, index, isPro: isPro);
     final free = !RewardConfig.gatingEnabled || index < RewardConfig.freeEpisodes;
 
+    // Sub-label: availability first, then gating status. We don't infer
+    // "preparing" from is_mirrored here — wow-drama episodes play via HLS
+    // without being mirrored; the player resolves the real source on tap and
+    // shows "preparing" only if the source truly isn't ready yet.
+    String sub;
+    Color subColor;
+    if (ep.isUnavailable) {
+      sub = l.pick('ไม่พร้อมใช้งาน', 'Unavailable');
+      subColor = T.textFaint;
+    } else if (free) {
+      sub = l.pick('ดูฟรี', 'Free');
+      subColor = T.textFaint;
+    } else if (unlocked) {
+      sub = l.pick('ปลดล็อกแล้ว', 'Unlocked');
+      subColor = T.textFaint;
+    } else {
+      sub = '${l.pick('ปลดล็อก', 'Unlock')} · ${member.unlockCost} ${l.pick('เหรียญ', 'coins')}';
+      subColor = T.accent;
+    }
+
+    final playable = !ep.isUnavailable;
+    final icon = ep.isUnavailable
+        ? Icons.block_rounded
+        : !unlocked
+            ? Icons.lock_outline_rounded
+            : Icons.play_circle_outline_rounded;
+
     return InkWell(
-      onTap: () => _play(ep),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 64,
-              height: 40,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Stack(
-                  fit: StackFit.expand,
+      onTap: playable ? () => _play(index) : null,
+      child: Opacity(
+        opacity: ep.isUnavailable ? 0.5 : 1,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 64,
+                height: 40,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      PosterImage(
+                          url: ep.thumbnailUrl ?? c.displayImageUrl, seed: c.id + ep.number, radius: 8),
+                      Center(
+                        child: Icon(unlocked && !ep.isUnavailable ? Icons.play_arrow_rounded : Icons.lock_rounded,
+                            size: 18, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    PosterImage(url: s.displayImageUrl, seed: s.id + ep, radius: 8),
-                    Center(
-                      child: Icon(unlocked ? Icons.play_arrow_rounded : Icons.lock_rounded,
-                          size: 18, color: Colors.white70),
-                    ),
+                    Text(ep.label,
+                        style: AppTheme.body(14, weight: FontWeight.w600, color: T.textPrimary)),
+                    Text(sub, style: AppTheme.body(11.5, color: subColor)),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${l.pick('ตอนที่', 'EP')} $ep',
-                      style: AppTheme.body(14, weight: FontWeight.w600, color: T.textPrimary)),
-                  Text(
-                    free
-                        ? l.pick('ดูฟรี', 'Free')
-                        : unlocked
-                            ? l.pick('ปลดล็อกแล้ว', 'Unlocked')
-                            : '${l.pick('ปลดล็อก', 'Unlock')} · ${member.unlockCost} ${l.pick('เหรียญ', 'coins')}',
-                    style: AppTheme.body(11.5, color: unlocked ? T.textFaint : T.accent),
-                  ),
-                ],
-              ),
-            ),
-            Icon(
-              unlocked ? Icons.play_circle_outline_rounded : Icons.lock_outline_rounded,
-              color: unlocked ? T.textMuted : T.accent,
-              size: 20,
-            ),
-          ],
+              Icon(icon, color: unlocked && !ep.isUnavailable ? T.textMuted : T.accent, size: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -449,7 +468,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
             const SizedBox(height: 12),
             SizedBox(
               width: 160,
-              child: AccentButton(label: l.pick('ลองใหม่', 'Retry'), height: 44, onPressed: _loadEpisodes),
+              child: AccentButton(label: l.pick('ลองใหม่', 'Retry'), height: 44, onPressed: _load),
             ),
           ],
         ),

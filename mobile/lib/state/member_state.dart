@@ -80,24 +80,24 @@ class MemberState extends ChangeNotifier {
 
   // ----------------------------------------------------------- gating
 
-  /// Free for the first [freeEpisodes], for Pro members, or if unlocked.
-  /// When the lock is disabled, every episode is free.
-  bool isEpisodeUnlocked(int seriesId, List<int> episodes, int ep, {required bool isPro}) {
+  /// Free for the first [freeEpisodes] (by position), for Pro members, or if
+  /// unlocked. When the lock is disabled, every episode is free.
+  /// [episodeId] is the stable NetWix episode id used as the unlock key.
+  bool isEpisodeUnlocked(int contentId, int episodeId, int index, {required bool isPro}) {
     if (!RewardConfig.gatingEnabled) return true;
     if (isPro) return true;
-    final idx = episodes.indexOf(ep);
-    if (idx >= 0 && idx < RewardConfig.freeEpisodes) return true;
-    return _store.isUnlocked(seriesId, ep);
+    if (index < RewardConfig.freeEpisodes) return true;
+    return _store.isUnlocked(contentId, episodeId);
   }
 
-  bool isUnlocked(int seriesId, int ep) => _store.isUnlocked(seriesId, ep);
+  bool isUnlocked(int contentId, int episodeId) => _store.isUnlocked(contentId, episodeId);
 
   /// Spends coins to unlock one episode. Returns false if not enough coins.
-  Future<bool> unlockEpisode(int seriesId, int ep) async {
-    if (_store.isUnlocked(seriesId, ep)) return true;
+  Future<bool> unlockEpisode(int contentId, int episodeId) async {
+    if (_store.isUnlocked(contentId, episodeId)) return true;
     if (!await _spend(RewardConfig.unlockCost)) return false;
-    await _store.addUnlock(seriesId, ep);
-    unawaited(_netwix.unlock(seriesId, ep));
+    await _store.addUnlock(contentId, episodeId);
+    unawaited(_netwix.unlock(contentId, episodeId));
     notifyListeners();
     return true;
   }

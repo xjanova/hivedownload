@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../l10n/l10n.dart';
 import '../main.dart' show routeObserver;
 import '../services/catalog_db.dart';
+import '../services/netwix_api.dart';
 import '../state/app_state.dart';
 import '../state/catalog_state.dart';
 import '../theme/app_theme.dart';
@@ -106,7 +107,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 scrollDirection: Axis.horizontal,
                 itemCount: catalog.visible.length.clamp(0, 15),
                 separatorBuilder: (_, _) => const SizedBox(width: 12),
-                itemBuilder: (_, i) => PortraitPosterCard(series: catalog.visible[i]),
+                itemBuilder: (_, i) => PortraitPosterCard(content: catalog.visible[i]),
               ),
             ),
             const SizedBox(height: 24),
@@ -115,12 +116,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
               trailing: l.pick('ทั้งหมด ›', 'See all ›'),
               onTrailingTap: widget.onOpenExplore,
             ),
-            if (catalog.featured.isNotEmpty) FeaturedCard(series: catalog.featured.first),
+            if (catalog.featured.isNotEmpty) FeaturedCard(content: catalog.featured.first),
             const SizedBox(height: 16),
             for (final s in catalog.featured.skip(1).take(3))
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: FeaturedCard(series: s),
+                child: FeaturedCard(content: s),
               ),
           ],
         ],
@@ -223,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   Widget _continueCard(L10n l, ResumeItem it) {
-    final title = it.series.cleanTitle.isEmpty ? it.series.title : it.series.cleanTitle;
+    final title = it.content.title;
     return GestureDetector(
       onTap: () => _openContinue(it),
       child: SizedBox(
@@ -238,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    PosterImage(url: it.series.displayImageUrl, seed: it.series.id, radius: 0),
+                    PosterImage(url: it.content.heroImageUrl, seed: it.content.id, radius: 0),
                     const DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
@@ -271,7 +272,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: AppTheme.body(12.5, weight: FontWeight.w600, color: T.textPrimary)),
-            Text('${l.pick('ตอนที่', 'EP')} ${it.episode}',
+            Text('${l.pick('ตอนที่', 'EP')} ${it.episodeNumber}',
                 style: AppTheme.body(10.5, color: T.textFaint)),
           ],
         ),
@@ -280,12 +281,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   Future<void> _openContinue(ResumeItem it) async {
-    final db = context.read<CatalogDb>();
-    var eps = await db.getEpisodes(it.series.id);
-    if (eps.isEmpty) eps = [it.episode];
+    final api = context.read<NetwixApi>();
+    final detail = await api.fetchDetail(it.content.slug);
     if (!mounted) return;
+    final eps = detail?.episodes ?? const [];
+    if (eps.isEmpty) return;
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => PlaybackScreen(series: it.series, episodes: eps, startEpisode: it.episode),
+      builder: (_) =>
+          PlaybackScreen(content: it.content, episodes: eps, startEpisodeId: it.episodeId),
     ));
   }
 

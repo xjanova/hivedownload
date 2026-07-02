@@ -7,10 +7,11 @@ import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../l10n/l10n.dart';
-import '../models/series.dart';
+import '../models/content.dart';
+import '../models/episode.dart';
 import '../services/catalog_db.dart';
 import '../services/format.dart';
-import '../services/rongyok_client.dart';
+import '../services/netwix_api.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
 import '../widgets/unlock_sheet.dart';
@@ -18,24 +19,25 @@ import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/ad_banner.dart';
 
-/// 08 — Series Playback · เล่นซีรีส์.
+/// 08 — Playback · เล่นซีรีส์.
 ///
 /// Full-screen, immersive, **TikTok-style vertical feed**: one episode per page,
-/// swipe up = next episode, swipe down = previous. Adjacent episodes are
-/// pre-resolved + pre-initialised so swiping plays instantly. Only the current
-/// page has audio/plays; neighbours stay paused & ready. Keeps resume (seek +
-/// checkpoint), the 12h video-URL cache, and the free-user ad overlay.
+/// swipe up = next episode, swipe down = previous. Each episode's stream is
+/// resolved from NetWix (`/episodes/{id}/source`) — a mirrored MP4 or HLS proxy
+/// that plays from any IP. Adjacent episodes are pre-resolved + pre-initialised
+/// so swiping plays instantly. Only the current page plays; neighbours stay
+/// paused & ready. Keeps resume (seek + checkpoint) and the free-user ad overlay.
 class PlaybackScreen extends StatefulWidget {
   const PlaybackScreen({
     super.key,
-    required this.series,
+    required this.content,
     required this.episodes,
-    required this.startEpisode,
+    required this.startEpisodeId,
   });
 
-  final Series series;
-  final List<int> episodes;
-  final int startEpisode;
+  final Content content;
+  final List<Episode> episodes;
+  final int startEpisodeId;
 
   @override
   State<PlaybackScreen> createState() => _PlaybackScreenState();
@@ -48,10 +50,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   final Map<int, VideoPlayerController> _controllers = {};
   final Set<int> _loading = {};
   final Set<int> _failed = {};
-  final Set<int> _retried = {}; // one fresh-URL retry per episode
-  final Map<int, String> _errMsg = {}; // shown on the failed page for diagnosis
+  final Set<int> _preparing = {}; // episode not mirrored yet (ready:false)
+  final Set<int> _retried = {}; // one retry per episode
+  final Map<int, String> _errMsg = {};
 
-  RongYokClient? _client;
+  NetwixApi? _api;
   CatalogDb? _db;
   MemberState? _member;
   bool _isPro = false;
@@ -59,13 +62,14 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   DateTime _lastResumeSave = DateTime.fromMillisecondsSinceEpoch(0);
   bool _advancing = false;
 
-  Series get s => widget.series;
-  List<int> get eps => widget.episodes;
+  Content get c => widget.content;
+  List<Episode> get eps => widget.episodes;
 
   @override
   void initState() {
     super.initState();
-    _current = eps.indexOf(widget.startEpisode).clamp(0, eps.length - 1);
+    final start = eps.indexWhere((e) => e.id == widget.startEpisodeId);
+    _current = (start < 0 ? 0 : start).clamp(0, eps.length - 1);
     _pageController = PageController(initialPage: _current);
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -74,12 +78,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_client == null) {
-      _client = context.read<RongYokClient>();
+    if (_api == null) {
+      _api = context.read<NetwixApi>();
       _db = context.read<CatalogDb>();
       _member = context.read<MemberState>();
       _isPro = context.read<AppState>().isPro;
-      // kick off current + neighbours
       _ensure(_current);
       _ensure(_current + 1);
       _ensure(_current - 1);
@@ -89,9 +92,9 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   @override
   void dispose() {
     _saveResume(_current);
-    for (final c in _controllers.values) {
-      c.removeListener(_onTick);
-      c.dispose();
+    for (final ctrl in _controllers.values) {
+      ctrl.removeListener(_onTick);
+      ctrl.dispose();
     }
     _pageController.dispose();
     WakelockPlus.disable();
@@ -102,30 +105,22 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
 
   // ------------------------------------------------------- controller window
 
-  Future<String?> _resolveUrl(int ep) async {
-    final db = _db!;
-    final cached = await db.freshVideoUrl(s.id, ep);
-    if (cached != null) return cached;
-    final url = await _client!.getVideoUrl(s.id, ep);
-    if (url != null) unawaited(db.cacheVideoUrl(s.id, ep, url));
-    return url;
-  }
-
   bool _locked(int index) {
     if (index < 0 || index >= eps.length) return false;
     final m = _member;
     if (m == null) return false;
-    return !m.isEpisodeUnlocked(s.id, eps, eps[index], isPro: _isPro);
+    final ep = eps[index];
+    return !m.isEpisodeUnlocked(c.id, ep.id, index, isPro: _isPro);
   }
 
   Future<void> _unlockAt(int index) async {
-    final ok = await showUnlockSheet(context, seriesId: s.id, episode: eps[index]);
+    final ok = await showUnlockSheet(context, seriesId: c.id, episode: eps[index].number);
     if (!ok || !mounted) return;
     setState(() {});
     await _ensure(index);
     if (index == _current) {
-      final c = _controllers[index];
-      c
+      final ctrl = _controllers[index];
+      ctrl
         ?..addListener(_onTick)
         ..play();
     }
@@ -135,46 +130,56 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     if (index < 0 || index >= eps.length) return;
     if (_locked(index)) return; // don't stream a locked episode
     if (_controllers.containsKey(index) || _loading.contains(index)) return;
+    final ep = eps[index];
+    if (ep.isUnavailable) return; // rendered as an "unavailable" page
+
     _loading.add(index);
     _failed.remove(index);
+    _preparing.remove(index);
 
-    final ep = eps[index];
     try {
-      final url = await _resolveUrl(ep);
+      final src = await _api!.resolveSource(ep.id);
       if (!mounted) return;
-      if (url == null) {
+      if (src == null) {
         _loading.remove(index);
-        _errMsg[index] = 'get_video ไม่คืนลิงก์ (series ${s.id} ep $ep)';
+        _errMsg[index] = 'เชื่อมต่อไม่ได้ (ตอน ${ep.number})';
         _failed.add(index);
-        if (mounted) setState(() {});
+        setState(() {});
         return;
       }
-      // No custom httpHeaders: the CDN serves the MP4 to any User-Agent, and
-      // passing a UA to ExoPlayer was causing "Source error" on release builds.
-      final c = VideoPlayerController.networkUrl(Uri.parse(url));
-      await c.initialize();
+      if (!src.ready || src.url == null) {
+        // NetWix hasn't mirrored this episode yet — show "preparing".
+        _loading.remove(index);
+        _preparing.add(index);
+        setState(() {});
+        return;
+      }
+
+      // Plain networkUrl handles both the mirrored MP4 and the HLS proxy on
+      // ExoPlayer. No custom httpHeaders (a User-Agent triggered "Source error"
+      // on release builds).
+      final ctrl = VideoPlayerController.networkUrl(Uri.parse(src.url!));
+      await ctrl.initialize();
       if (!mounted) {
-        await c.dispose();
+        await ctrl.dispose();
         return;
       }
-      await c.setLooping(false);
-      final resume = await _db!.getResume(s.id, ep);
-      if (resume != null && resume > 5 && resume < c.value.duration.inSeconds - 10) {
-        await c.seekTo(Duration(seconds: resume));
+      await ctrl.setLooping(false);
+      final resume = await _db!.getResume(c.id, ep.id);
+      if (resume != null && resume > 5 && resume < ctrl.value.duration.inSeconds - 10) {
+        await ctrl.seekTo(Duration(seconds: resume));
       }
-      _controllers[index] = c;
+      _controllers[index] = ctrl;
       _loading.remove(index);
       if (index == _current) {
-        c.addListener(_onTick);
-        await c.play();
+        ctrl.addListener(_onTick);
+        await ctrl.play();
       }
       if (mounted) setState(() {});
     } catch (e) {
       _loading.remove(index);
-      // A cached URL may have expired/died — drop it and re-resolve once.
       if (!_retried.contains(index)) {
         _retried.add(index);
-        await _db?.invalidateVideoUrl(s.id, eps[index]);
         if (mounted) {
           await _ensure(index);
           return;
@@ -190,14 +195,13 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     final far = _controllers.keys.where((i) => (i - center).abs() > 1).toList();
     for (final i in far) {
       _saveResume(i);
-      final c = _controllers.remove(i);
-      c?.removeListener(_onTick);
-      c?.dispose();
+      final ctrl = _controllers.remove(i);
+      ctrl?.removeListener(_onTick);
+      ctrl?.dispose();
     }
   }
 
   void _onPageChanged(int index) {
-    // leaving page: pause + remember
     final prev = _controllers[_current];
     if (prev != null) {
       prev.removeListener(_onTick);
@@ -222,20 +226,20 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   }
 
   void _onTick() {
-    final c = _controllers[_current];
-    if (c == null || !c.value.isInitialized) return;
+    final ctrl = _controllers[_current];
+    if (ctrl == null || !ctrl.value.isInitialized) return;
 
     final now = DateTime.now();
-    if (c.value.isPlaying && now.difference(_lastResumeSave).inSeconds >= 5) {
+    if (ctrl.value.isPlaying && now.difference(_lastResumeSave).inSeconds >= 5) {
       _lastResumeSave = now;
       _saveResume(_current);
     }
 
     // autoplay-next → swipe to the next episode
     if (!_advancing &&
-        c.value.duration > Duration.zero &&
-        c.value.position >= c.value.duration &&
-        !c.value.isPlaying &&
+        ctrl.value.duration > Duration.zero &&
+        ctrl.value.position >= ctrl.value.duration &&
+        !ctrl.value.isPlaying &&
         _current < eps.length - 1) {
       _advancing = true;
       _pageController.nextPage(
@@ -245,16 +249,17 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   }
 
   void _saveResume(int index) {
-    final c = _controllers[index];
-    if (c == null || !c.value.isInitialized) return;
+    final ctrl = _controllers[index];
+    if (ctrl == null || !ctrl.value.isInitialized) return;
+    final ep = eps[index];
     _db?.saveResume(
-        s.id, eps[index], c.value.position.inSeconds, c.value.duration.inSeconds);
+        c.id, ep.id, ep.number, ctrl.value.position.inSeconds, ctrl.value.duration.inSeconds);
   }
 
   void _togglePlay() {
-    final c = _controllers[_current];
-    if (c == null) return;
-    setState(() => c.value.isPlaying ? c.pause() : c.play());
+    final ctrl = _controllers[_current];
+    if (ctrl == null) return;
+    setState(() => ctrl.value.isPlaying ? ctrl.pause() : ctrl.play());
   }
 
   void _openEpisodeSheet() {
@@ -282,6 +287,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
                 itemCount: eps.length,
                 itemBuilder: (_, i) {
                   final active = i == _current;
+                  final ep = eps[i];
                   return GestureDetector(
                     onTap: () {
                       Navigator.of(context).pop();
@@ -295,10 +301,14 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: active ? Colors.transparent : T.hairline),
                       ),
-                      child: Text('${eps[i]}',
+                      child: Text('${ep.number}',
                           style: AppTheme.display(14,
                               weight: FontWeight.w700,
-                              color: active ? T.onAccent : T.textSecondary)),
+                              color: active
+                                  ? T.onAccent
+                                  : ep.isUnavailable
+                                      ? T.textFaint
+                                      : T.textSecondary)),
                     ),
                   );
                 },
@@ -327,6 +337,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
             itemBuilder: (_, index) => _EpisodePage(
               controller: _controllers[index],
               failed: _failed.contains(index),
+              preparing: _preparing.contains(index),
               errorText: _errMsg[index],
               locked: _locked(index),
               episode: eps[index],
@@ -353,12 +364,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(s.cleanTitle.isEmpty ? s.title : s.cleanTitle,
+                          Text(c.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: AppTheme.display(15,
                                   weight: FontWeight.w700, color: Colors.white)),
-                          Text('${l.pick('ตอนที่', 'EP')} ${eps[_current]} · ${_current + 1}/${eps.length}',
+                          Text('${l.pick('ตอนที่', 'EP')} ${eps[_current].number} · ${_current + 1}/${eps.length}',
                               style: AppTheme.body(11.5, color: Colors.white70)),
                         ],
                       ),
@@ -407,12 +418,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   }
 
   Widget _scrubber() {
-    final c = _controllers[_current];
-    if (c == null || !c.value.isInitialized) {
+    final ctrl = _controllers[_current];
+    if (ctrl == null || !ctrl.value.isInitialized) {
       return const SizedBox(height: 24);
     }
-    final pos = c.value.position;
-    final dur = c.value.duration;
+    final pos = ctrl.value.position;
+    final dur = ctrl.value.duration;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
       child: Row(
@@ -434,7 +445,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
                     ? 0
                     : pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble(),
                 max: dur.inMilliseconds.toDouble().clamp(1, double.infinity),
-                onChanged: (v) => c.seekTo(Duration(milliseconds: v.toInt())),
+                onChanged: (v) => ctrl.seekTo(Duration(milliseconds: v.toInt())),
               ),
             ),
           ),
@@ -479,6 +490,7 @@ class _EpisodePage extends StatelessWidget {
   const _EpisodePage({
     required this.controller,
     required this.failed,
+    required this.preparing,
     required this.errorText,
     required this.locked,
     required this.episode,
@@ -491,9 +503,10 @@ class _EpisodePage extends StatelessWidget {
 
   final VideoPlayerController? controller;
   final bool failed;
+  final bool preparing;
   final String? errorText;
   final bool locked;
-  final int episode;
+  final Episode episode;
   final int unlockCost;
   final VoidCallback onUnlock;
   final VoidCallback? onTapVideo;
@@ -502,41 +515,46 @@ class _EpisodePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = controller;
+    final ctrl = controller;
 
     if (locked) {
-      return SizedBox.expand(
-        child: DecoratedBox(
-          decoration: const BoxDecoration(color: Color(0xFF0B0B0C)),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.lock_rounded, color: T.accent, size: 56),
-                const SizedBox(height: 14),
-                Text('${l.pick('ตอนที่', 'EP')} $episode ${l.pick('ถูกล็อก', 'locked')}',
-                    style: AppTheme.display(18, weight: FontWeight.w700, color: Colors.white)),
-                const SizedBox(height: 6),
-                Text(l.pick('ดูฟรี 3 ตอนแรก · ตอนถัดไปใช้เหรียญ', 'First 3 free · unlock with coins'),
-                    style: AppTheme.body(12.5, color: Colors.white70)),
-                const SizedBox(height: 18),
-                GestureDetector(
-                  onTap: onUnlock,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                    decoration: BoxDecoration(
-                        gradient: T.accentGradient, borderRadius: BorderRadius.circular(T.rButton)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.lock_open_rounded, color: T.onAccent, size: 18),
-                      const SizedBox(width: 8),
-                      Text('${l.pick('ปลดล็อก', 'Unlock')} · $unlockCost ${l.pick('เหรียญ', 'coins')}',
-                          style: AppTheme.display(14, weight: FontWeight.w700, color: T.onAccent)),
-                    ]),
-                  ),
-                ),
-              ],
-            ),
+      return _StatusPage(
+        icon: Icons.lock_rounded,
+        title: '${l.pick('ตอนที่', 'EP')} ${episode.number} ${l.pick('ถูกล็อก', 'locked')}',
+        subtitle: l.pick('ดูฟรี 3 ตอนแรก · ตอนถัดไปใช้เหรียญ', 'First 3 free · unlock with coins'),
+        action: GestureDetector(
+          onTap: onUnlock,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+            decoration: BoxDecoration(
+                gradient: T.accentGradient, borderRadius: BorderRadius.circular(T.rButton)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.lock_open_rounded, color: T.onAccent, size: 18),
+              const SizedBox(width: 8),
+              Text('${l.pick('ปลดล็อก', 'Unlock')} · $unlockCost ${l.pick('เหรียญ', 'coins')}',
+                  style: AppTheme.display(14, weight: FontWeight.w700, color: T.onAccent)),
+            ]),
           ),
+        ),
+      );
+    }
+
+    if (episode.isUnavailable) {
+      return _StatusPage(
+        icon: Icons.block_rounded,
+        title: '${l.pick('ตอนที่', 'EP')} ${episode.number}',
+        subtitle: l.pick('ตอนนี้ยังไม่พร้อมให้ชม', 'This episode is unavailable'),
+      );
+    }
+
+    if (preparing) {
+      return _StatusPage(
+        icon: Icons.hourglass_bottom_rounded,
+        title: l.pick('กำลังเตรียมตอนนี้', 'Preparing this episode'),
+        subtitle: l.pick('ระบบกำลังเตรียมไฟล์ ลองใหม่อีกครั้งภายหลัง', 'Being mirrored — check back soon'),
+        action: TextButton(
+          onPressed: onRetry,
+          child: Text(l.pick('ลองใหม่', 'Retry'), style: AppTheme.body(13, color: T.accent)),
         ),
       );
     }
@@ -548,14 +566,14 @@ class _EpisodePage extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (c != null && c.value.isInitialized)
+            if (ctrl != null && ctrl.value.isInitialized)
               FittedBox(
                 fit: BoxFit.cover,
                 clipBehavior: Clip.hardEdge,
                 child: SizedBox(
-                  width: c.value.size.width,
-                  height: c.value.size.height,
-                  child: VideoPlayer(c),
+                  width: ctrl.value.size.width,
+                  height: ctrl.value.size.height,
+                  child: VideoPlayer(ctrl),
                 ),
               )
             else if (failed)
@@ -588,11 +606,61 @@ class _EpisodePage extends StatelessWidget {
               const Center(child: CircularProgressIndicator(color: T.accent)),
 
             // paused indicator (only for the active, tappable page)
-            if (onTapVideo != null && c != null && c.value.isInitialized && !c.value.isPlaying)
+            if (onTapVideo != null && ctrl != null && ctrl.value.isInitialized && !ctrl.value.isPlaying)
               const Center(
                 child: Icon(Icons.play_arrow_rounded, color: Colors.white70, size: 74),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen centred status card (locked / unavailable / preparing).
+class _StatusPage extends StatelessWidget {
+  const _StatusPage({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.expand(
+      child: DecoratedBox(
+        decoration: const BoxDecoration(color: Color(0xFF0B0B0C)),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: T.accent, size: 56),
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text(title,
+                    textAlign: TextAlign.center,
+                    style: AppTheme.display(18, weight: FontWeight.w700, color: Colors.white)),
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(subtitle,
+                    textAlign: TextAlign.center,
+                    style: AppTheme.body(12.5, color: Colors.white70)),
+              ),
+              if (action != null) ...[
+                const SizedBox(height: 18),
+                action!,
+              ],
+            ],
+          ),
         ),
       ),
     );

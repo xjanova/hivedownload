@@ -1,26 +1,26 @@
 import 'package:flutter/material.dart';
 
-import '../models/series.dart';
+import '../models/content.dart';
 import '../screens/series_detail_screen.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import 'common.dart';
 import 'poster_image.dart';
 
-void openSeries(BuildContext context, Series s) {
-  Navigator.of(context).push(MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: s)));
+void openContent(BuildContext context, Content c) {
+  Navigator.of(context).push(MaterialPageRoute(builder: (_) => SeriesDetailScreen(content: c)));
 }
 
 /// Portrait poster card used in the vertical rail and grid.
 class PortraitPosterCard extends StatelessWidget {
-  const PortraitPosterCard({super.key, required this.series, this.width = 118});
-  final Series series;
+  const PortraitPosterCard({super.key, required this.content, this.width = 118});
+  final Content content;
   final double width;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => openSeries(context, series),
+      onTap: () => openContent(context, content),
       child: SizedBox(
         width: width,
         child: Column(
@@ -31,30 +31,30 @@ class PortraitPosterCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  PosterImage(url: series.displayImageUrl, seed: series.id),
+                  PosterImage(url: content.displayImageUrl, seed: content.id),
                   Positioned(
                     left: 6,
                     top: 6,
-                    child: Pill(text: series.typeThai, filled: true),
+                    child: Pill(text: content.typeThai, filled: true),
                   ),
-                  if (series.viewCount > 0)
+                  if (content.views > 0)
                     Positioned(
                       right: 6,
                       bottom: 6,
-                      child: Pill(text: '${series.viewCountText} 👁', color: Colors.black54, filled: true, textColor: Colors.white),
+                      child: Pill(text: '${content.viewsText} 👁', color: Colors.black54, filled: true, textColor: Colors.white),
                     ),
                 ],
               ),
             ),
             const SizedBox(height: 7),
             Text(
-              series.cleanTitle.isEmpty ? series.title : series.cleanTitle,
+              content.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: AppTheme.body(12.5, weight: FontWeight.w600, color: T.textPrimary),
             ),
-            if (series.yearText.isNotEmpty)
-              Text(series.yearText, style: AppTheme.body(10.5, color: T.textFaint)),
+            if (content.yearText.isNotEmpty)
+              Text(content.yearText, style: AppTheme.body(10.5, color: T.textFaint)),
           ],
         ),
       ),
@@ -64,19 +64,19 @@ class PortraitPosterCard extends StatelessWidget {
 
 /// Wide 16:9 featured card for the "new / popular" section.
 class FeaturedCard extends StatelessWidget {
-  const FeaturedCard({super.key, required this.series});
-  final Series series;
+  const FeaturedCard({super.key, required this.content});
+  final Content content;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => openSeries(context, series),
+      onTap: () => openContent(context, content),
       child: AspectRatio(
         aspectRatio: 16 / 9,
         child: Stack(
           fit: StackFit.expand,
           children: [
-            PosterImage(url: series.displayImageUrl, seed: series.id + 1),
+            PosterImage(url: content.heroImageUrl, seed: content.id + 1),
             // left-dark gradient overlay
             DecoratedBox(
               decoration: BoxDecoration(
@@ -98,11 +98,11 @@ class FeaturedCard extends StatelessWidget {
                   Row(children: [
                     const Pill(text: 'ดูฟรี', filled: true),
                     const SizedBox(width: 6),
-                    Pill(text: series.typeThai, color: Colors.black54, filled: true, textColor: Colors.white),
+                    Pill(text: content.typeThai, color: Colors.black54, filled: true, textColor: Colors.white),
                   ]),
                   const SizedBox(height: 8),
                   Text(
-                    series.cleanTitle.isEmpty ? series.title : series.cleanTitle,
+                    content.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: AppTheme.display(18, weight: FontWeight.w700),

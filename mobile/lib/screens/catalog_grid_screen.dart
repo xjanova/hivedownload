@@ -126,7 +126,7 @@ class _CatalogGridScreenState extends State<CatalogGridScreen> {
                             childAspectRatio: 0.5,
                           ),
                           itemCount: list.length,
-                          itemBuilder: (_, i) => PortraitPosterCard(series: list[i], width: double.infinity),
+                          itemBuilder: (_, i) => PortraitPosterCard(content: list[i], width: double.infinity),
                         ),
         ),
       ],

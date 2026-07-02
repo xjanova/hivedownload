@@ -3,102 +3,100 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
-import '../models/series.dart';
+import '../models/content.dart';
 
-/// One "continue watching" entry (resume row joined with its series).
+/// One "continue watching" entry (resume row joined with its content).
 class ResumeItem {
-  ResumeItem(this.series, this.episode, this.positionSec, this.durationSec);
-  final Series series;
-  final int episode;
+  ResumeItem(this.content, this.episodeId, this.episodeNumber, this.positionSec, this.durationSec);
+  final Content content;
+  final int episodeId;
+  final int episodeNumber;
   final int positionSec;
   final int durationSec;
   double get progress => durationSec > 0 ? positionSec / durationSec : 0;
 }
 
-/// Local SQLite cache for the streaming app (mirrors the desktop `rongyok.db`,
-/// minus download state). Holds:
-///   • series          — the whole catalog (offline-friendly, instant open)
-///   • series_episodes — cached episode-number list per series
-///   • video_cache     — resolved MP4 URLs with a timestamp (reused only while
-///                       fresh; the CDN links expire ~24h so we re-resolve)
-///   • resume          — last watched position per (series, episode)
-///   • meta            — small key/value (e.g. last catalog sync time)
+/// Local SQLite cache. Everything comes from NetWix now, so this only holds:
+///   • content — the cached catalog (instant paint before the network returns)
+///   • resume  — last watched position per (content, episode)
+///   • meta    — small key/value (e.g. last catalog sync time)
+///
+/// Video URLs are no longer cached: NetWix serves stable `/storage/*.mp4`
+/// (or an HLS proxy) resolved live per play, so there's nothing to expire.
 class CatalogDb {
   CatalogDb._(this._db);
   final Database _db;
-
-  /// How long a cached video URL may be reused before we re-resolve it.
-  static const Duration videoUrlTtl = Duration(hours: 12);
 
   static Future<CatalogDb> open() async {
     final dir = await getApplicationSupportDirectory();
     final path = p.join(dir.path, 'hivedownload.db');
     final db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, _) async {
-        await db.execute('''
-          CREATE TABLE series (
-            id             INTEGER PRIMARY KEY,
-            title          TEXT NOT NULL DEFAULT '',
-            clean_title    TEXT NOT NULL DEFAULT '',
-            description    TEXT NOT NULL DEFAULT '',
-            type           INTEGER NOT NULL DEFAULT 0,
-            poster_url     TEXT NOT NULL DEFAULT '',
-            jpg_url        TEXT NOT NULL DEFAULT '',
-            view_count     INTEGER NOT NULL DEFAULT 0,
-            created_at     TEXT NOT NULL DEFAULT '',
-            episodes_count INTEGER NOT NULL DEFAULT 0,
-            year           INTEGER
-          )''');
-        await db.execute('''
-          CREATE TABLE series_episodes (
-            series_id      INTEGER NOT NULL,
-            episode_number INTEGER NOT NULL,
-            PRIMARY KEY (series_id, episode_number)
-          )''');
-        await db.execute('''
-          CREATE TABLE video_cache (
-            series_id      INTEGER NOT NULL,
-            episode_number INTEGER NOT NULL,
-            url            TEXT NOT NULL,
-            resolved_at    INTEGER NOT NULL,
-            PRIMARY KEY (series_id, episode_number)
-          )''');
-        await db.execute('''
-          CREATE TABLE resume (
-            series_id      INTEGER NOT NULL,
-            episode_number INTEGER NOT NULL,
-            position_sec   INTEGER NOT NULL,
-            duration_sec   INTEGER NOT NULL,
-            updated_at     INTEGER NOT NULL,
-            PRIMARY KEY (series_id, episode_number)
-          )''');
-        await db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)');
+      onCreate: (db, _) => _createSchema(db),
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // v1 was the rongyok schema — drop it wholesale and rebuild for NetWix.
+        for (final t in ['series', 'series_episodes', 'video_cache', 'resume', 'meta']) {
+          await db.execute('DROP TABLE IF EXISTS $t');
+        }
+        await _createSchema(db);
       },
     );
     return CatalogDb._(db);
   }
 
-  // ----------------------------------------------------------------- series
+  static Future<void> _createSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE content (
+        id             INTEGER PRIMARY KEY,
+        slug           TEXT NOT NULL DEFAULT '',
+        title          TEXT NOT NULL DEFAULT '',
+        type           TEXT NOT NULL DEFAULT 'series',
+        synopsis       TEXT NOT NULL DEFAULT '',
+        year           INTEGER,
+        rating         REAL NOT NULL DEFAULT 0,
+        poster_url     TEXT NOT NULL DEFAULT '',
+        backdrop_url   TEXT NOT NULL DEFAULT '',
+        views          INTEGER NOT NULL DEFAULT 0,
+        episodes_count INTEGER NOT NULL DEFAULT 0
+      )''');
+    await db.execute('''
+      CREATE TABLE resume (
+        content_id     INTEGER NOT NULL,
+        episode_id     INTEGER NOT NULL,
+        episode_number INTEGER NOT NULL,
+        position_sec   INTEGER NOT NULL,
+        duration_sec   INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        PRIMARY KEY (content_id, episode_id)
+      )''');
+    await db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)');
+  }
 
-  Future<void> upsertSeries(List<Series> items) async {
+  // ---------------------------------------------------------------- content
+
+  Future<void> upsertContent(List<Content> items) async {
     final batch = _db.batch();
-    for (final s in items) {
-      batch.insert('series', _seriesToRow(s), conflictAlgorithm: ConflictAlgorithm.replace);
+    for (final c in items) {
+      batch.insert('content', c.toDbMap(), conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
     await setMeta('catalog_synced_at', '${DateTime.now().millisecondsSinceEpoch}');
   }
 
-  Future<List<Series>> getAllSeries() async {
-    final rows = await _db.query('series');
-    return rows.map(_rowToSeries).toList();
+  Future<List<Content>> getAllContent() async {
+    final rows = await _db.query('content');
+    return rows.map(Content.fromDbMap).toList();
   }
 
-  Future<int> seriesCount() async =>
-      Sqflite.firstIntValue(await _db.rawQuery('SELECT COUNT(*) FROM series')) ?? 0;
+  Future<Content?> getContent(int id) async {
+    final rows = await _db.query('content', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : Content.fromDbMap(rows.first);
+  }
+
+  Future<int> contentCount() async =>
+      Sqflite.firstIntValue(await _db.rawQuery('SELECT COUNT(*) FROM content')) ?? 0;
 
   Future<DateTime?> lastCatalogSync() async {
     final v = await getMeta('catalog_synced_at');
@@ -106,74 +104,22 @@ class CatalogDb {
     return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
   }
 
-  // --------------------------------------------------------------- episodes
+  // ----------------------------------------------------------------- resume
 
-  Future<void> upsertEpisodes(int seriesId, List<int> episodes) async {
-    final batch = _db.batch();
-    for (final n in episodes) {
-      batch.insert('series_episodes', {'series_id': seriesId, 'episode_number': n},
-          conflictAlgorithm: ConflictAlgorithm.ignore);
-    }
-    batch.update('series', {'episodes_count': episodes.length},
-        where: 'id = ?', whereArgs: [seriesId]);
-    await batch.commit(noResult: true);
-  }
-
-  Future<List<int>> getEpisodes(int seriesId) async {
-    final rows = await _db.query('series_episodes',
-        columns: ['episode_number'],
-        where: 'series_id = ?',
-        whereArgs: [seriesId],
-        orderBy: 'episode_number');
-    return rows.map((r) => (r['episode_number'] as num).toInt()).toList();
-  }
-
-  // ------------------------------------------------------------- video urls
-
-  /// Returns a cached MP4 URL only if it was resolved within [videoUrlTtl].
-  Future<String?> freshVideoUrl(int seriesId, int ep) async {
-    final rows = await _db.query('video_cache',
-        where: 'series_id = ? AND episode_number = ?', whereArgs: [seriesId, ep], limit: 1);
-    if (rows.isEmpty) return null;
-    final resolvedAt = (rows.first['resolved_at'] as num).toInt();
-    final age = DateTime.now().millisecondsSinceEpoch - resolvedAt;
-    if (age > videoUrlTtl.inMilliseconds) return null;
-    return rows.first['url'] as String?;
-  }
-
-  Future<void> cacheVideoUrl(int seriesId, int ep, String url) async {
-    await _db.insert(
-        'video_cache',
-        {
-          'series_id': seriesId,
-          'episode_number': ep,
-          'url': url,
-          'resolved_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace);
-  }
-
-  /// Drops a cached URL (e.g. it turned out to be dead) so the next play
-  /// re-resolves a fresh one.
-  Future<void> invalidateVideoUrl(int seriesId, int ep) async {
-    await _db.delete('video_cache',
-        where: 'series_id = ? AND episode_number = ?', whereArgs: [seriesId, ep]);
-  }
-
-  // ---------------------------------------------------------------- resume
-
-  Future<void> saveResume(int seriesId, int ep, int positionSec, int durationSec) async {
+  Future<void> saveResume(
+      int contentId, int episodeId, int episodeNumber, int positionSec, int durationSec) async {
     // Don't remember trivial or finished positions.
     if (positionSec < 5 || (durationSec > 0 && positionSec > durationSec - 10)) {
       await _db.delete('resume',
-          where: 'series_id = ? AND episode_number = ?', whereArgs: [seriesId, ep]);
+          where: 'content_id = ? AND episode_id = ?', whereArgs: [contentId, episodeId]);
       return;
     }
     await _db.insert(
         'resume',
         {
-          'series_id': seriesId,
-          'episode_number': ep,
+          'content_id': contentId,
+          'episode_id': episodeId,
+          'episode_number': episodeNumber,
           'position_sec': positionSec,
           'duration_sec': durationSec,
           'updated_at': DateTime.now().millisecondsSinceEpoch,
@@ -181,11 +127,11 @@ class CatalogDb {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  Future<int?> getResume(int seriesId, int ep) async {
+  Future<int?> getResume(int contentId, int episodeId) async {
     final rows = await _db.query('resume',
         columns: ['position_sec'],
-        where: 'series_id = ? AND episode_number = ?',
-        whereArgs: [seriesId, ep],
+        where: 'content_id = ? AND episode_id = ?',
+        whereArgs: [contentId, episodeId],
         limit: 1);
     return rows.isEmpty ? null : (rows.first['position_sec'] as num).toInt();
   }
@@ -193,12 +139,14 @@ class CatalogDb {
   /// Most-recently-watched, unfinished episodes, newest first.
   Future<List<ResumeItem>> continueWatching({int limit = 10}) async {
     final rows = await _db.rawQuery('''
-      SELECT r.episode_number AS ep, r.position_sec AS pos, r.duration_sec AS dur, s.*
-      FROM resume r JOIN series s ON s.id = r.series_id
+      SELECT r.episode_id AS eid, r.episode_number AS ep, r.position_sec AS pos,
+             r.duration_sec AS dur, c.*
+      FROM resume r JOIN content c ON c.id = r.content_id
       ORDER BY r.updated_at DESC LIMIT ?''', [limit]);
     return rows
         .map((row) => ResumeItem(
-              _rowToSeries(row),
+              Content.fromDbMap(row),
+              (row['eid'] as num).toInt(),
               (row['ep'] as num).toInt(),
               (row['pos'] as num).toInt(),
               (row['dur'] as num).toInt(),
@@ -216,24 +164,6 @@ class CatalogDb {
   Future<void> setMeta(String key, String value) => _db.insert(
       'meta', {'key': key, 'value': value},
       conflictAlgorithm: ConflictAlgorithm.replace);
-
-  // --------------------------------------------------------------- mapping
-
-  Map<String, Object?> _seriesToRow(Series s) => {
-        'id': s.id,
-        'title': s.title,
-        'clean_title': s.cleanTitle,
-        'description': s.description,
-        'type': s.type.index,
-        'poster_url': s.posterUrl,
-        'jpg_url': s.jpgUrl,
-        'view_count': s.viewCount,
-        'created_at': s.createdAt,
-        'episodes_count': s.episodesCount,
-        'year': s.year,
-      };
-
-  Series _rowToSeries(Map<String, Object?> m) => Series.fromDbRow(m);
 
   Future<void> close() async {
     try {

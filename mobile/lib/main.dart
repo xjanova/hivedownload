@@ -9,8 +9,8 @@ import 'services/ad_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_updater.dart';
 import 'services/catalog_db.dart';
+import 'services/netwix_api.dart';
 import 'services/netwix_client.dart';
-import 'services/rongyok_client.dart';
 import 'services/settings_store.dart';
 import 'state/app_state.dart';
 import 'state/catalog_state.dart';
@@ -24,10 +24,13 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Content + playback both come from NetWix now (netwix.online/api/app/*).
+  // NetWix mirrors each episode to its own storage and streams plain
+  // /storage/*.mp4, which plays from any IP — fixing the rongyok
+  // residential-IP lock that broke playback when the app scraped rongyok.
   // Playback uses the platform-default video_player backend (ExoPlayer on
-  // Android) — the same stack the early releases (≤1.0.5) shipped with, which
-  // played every rongyok clip fine. The fvp/ffmpeg backend tried in 1.0.9
-  // broke ALL playback on real devices and was removed.
+  // Android); the fvp/ffmpeg backend tried in 1.0.9 broke ALL playback and
+  // was removed.
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
@@ -36,28 +39,28 @@ Future<void> main() async {
   ));
 
   final settings = await SettingsStore.load();
-  final client = RongYokClient();
+  final api = NetwixApi();
   final db = await CatalogDb.open();
   final accountStore = await AccountStore.load();
   final netwix = NetwixClient();
   final memberState = MemberState(accountStore, netwix, AuthService(netwix))..init();
 
   runApp(HiveApp(
-      settings: settings, client: client, db: db, netwix: netwix, memberState: memberState));
+      settings: settings, api: api, db: db, netwix: netwix, memberState: memberState));
 }
 
 class HiveApp extends StatelessWidget {
   const HiveApp({
     super.key,
     required this.settings,
-    required this.client,
+    required this.api,
     required this.db,
     required this.netwix,
     required this.memberState,
   });
 
   final SettingsStore settings;
-  final RongYokClient client;
+  final NetwixApi api;
   final CatalogDb db;
   final NetwixClient netwix;
   final MemberState memberState;
@@ -67,12 +70,12 @@ class HiveApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppState(settings)),
-        ChangeNotifierProvider(create: (_) => CatalogState(client, db)),
+        ChangeNotifierProvider(create: (_) => CatalogState(api, db)),
         ChangeNotifierProvider.value(value: memberState),
         // Ad delivery (main.thaiprompt.online). Starts fetching+rotating now;
         // a silent no-op until the ad backend goes live.
         ChangeNotifierProvider(create: (_) => AdService()..start(placements: const ['player', 'home'])),
-        Provider<RongYokClient>(create: (_) => client),
+        Provider<NetwixApi>.value(value: api),
         Provider<CatalogDb>(create: (_) => db),
         Provider<NetwixClient>.value(value: netwix),
         Provider<AutoUpdater>(create: (_) => AutoUpdater()),
