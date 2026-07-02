@@ -50,7 +50,6 @@ dependencies:
   google_sign_in: ^7.2.0
   share_plus: ^13.2.0
   flutter_line_sdk: ^2.7.2
-  fvp: ^0.37.3
 
 dev_dependencies:
   flutter_test:

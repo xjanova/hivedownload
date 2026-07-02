@@ -8,7 +8,12 @@
 class RewardConfig {
   RewardConfig._();
 
-  static const int freeEpisodes = 3; // ดูฟรี 3 ตอนแรก
+  /// Master switch for the coin-lock. While false, EVERY episode is free
+  /// (playback isn't gated) — the coin/earn UI still works, nothing is locked.
+  /// Flip to true to enable the "3 free then pay coins" model.
+  static const bool gatingEnabled = false;
+
+  static const int freeEpisodes = 3; // ดูฟรี 3 ตอนแรก (เมื่อ gatingEnabled)
   static const int unlockCost = 5; // เหรียญ/ตอน
 
   // ---- ways to earn coins (I define these; backend can override) ----

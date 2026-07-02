@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:fvp/fvp.dart' as fvp;
 import 'package:provider/provider.dart';
 
 import 'screens/app_shell.dart';
@@ -25,14 +24,10 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Route all video_player playback through the ffmpeg/mdk backend so the
-  // rongyok clips play regardless of codec (HEVC/H.265) or moov placement
-  // (their MP4s are non-fast-start). Android's default ExoPlayer can't decode
-  // HEVC on many devices — this fixes the "many videos won't play" reports.
-  // Default decoders = hardware first, FFmpeg software fallback → HEVC always plays.
-  fvp.registerWith(options: {
-    'platforms': ['android', 'ios'],
-  });
+  // Playback uses the platform-default video_player backend (ExoPlayer on
+  // Android) — the same stack the early releases (≤1.0.5) shipped with, which
+  // played every rongyok clip fine. The fvp/ffmpeg backend tried in 1.0.9
+  // broke ALL playback on real devices and was removed.
 
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,

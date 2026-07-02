@@ -81,7 +81,9 @@ class MemberState extends ChangeNotifier {
   // ----------------------------------------------------------- gating
 
   /// Free for the first [freeEpisodes], for Pro members, or if unlocked.
+  /// When the lock is disabled, every episode is free.
   bool isEpisodeUnlocked(int seriesId, List<int> episodes, int ep, {required bool isPro}) {
+    if (!RewardConfig.gatingEnabled) return true;
     if (isPro) return true;
     final idx = episodes.indexOf(ep);
     if (idx >= 0 && idx < RewardConfig.freeEpisodes) return true;

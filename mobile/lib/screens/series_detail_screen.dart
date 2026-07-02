@@ -8,6 +8,7 @@ import '../l10n/l10n.dart';
 import '../models/series.dart';
 import '../services/catalog_db.dart';
 import '../services/netwix_client.dart';
+import '../services/reward_config.dart';
 import '../services/rongyok_client.dart';
 import '../widgets/comment_sheet.dart';
 import '../state/app_state.dart';
@@ -389,7 +390,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     final member = context.watch<MemberState>();
     final isPro = context.watch<AppState>().isPro;
     final unlocked = member.isEpisodeUnlocked(s.id, _episodes, ep, isPro: isPro);
-    final free = index < 3;
+    final free = !RewardConfig.gatingEnabled || index < RewardConfig.freeEpisodes;
 
     return InkWell(
       onTap: () => _play(ep),
