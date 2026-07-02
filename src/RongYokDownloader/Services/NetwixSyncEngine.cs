@@ -105,25 +105,60 @@ public sealed class NetwixSyncEngine : IDisposable
             ct.ThrowIfCancellationRequested();
             i++;
             StatusChanged?.Invoke($"NetWix สั่งโหลด {i}/{items.Count} — {it.Title} ตอนที่ {it.Number}");
-            try
+
+            if (!int.TryParse(it.SourceKey, out var seriesId)) { Log?.Invoke($"✗ {it.Title} — id ไม่ถูกต้อง"); continue; }
+            if (await MirrorEpisodeAsync(seriesId, it, ct))
             {
-                if (!int.TryParse(it.SourceKey, out var seriesId)) { Log?.Invoke($"✗ {it.Title} — id ไม่ถูกต้อง"); continue; }
-                var url = await _rong.GetVideoUrlAsync(seriesId, it.Number, ct);
-                if (string.IsNullOrEmpty(url)) { Log?.Invoke($"✗ {it.Title} ตอน {it.Number} — หา URL ไม่เจอ"); continue; }
-
-                var tmp = Path.Combine(Path.GetTempPath(), $"netwixsync_{it.SourceKey}_{it.Number}.mp4");
-                long bytes = await DownloadAsync(url, tmp, ct);
-                await UploadAsync(it.SourceKey, it.Number, tmp, ct);
-                try { File.Delete(tmp); } catch { /* ignore */ }
-
-                Log?.Invoke($"✓ {it.Title} ตอน {it.Number} — {bytes / 1024 / 1024.0:0.0} MB");
+                Log?.Invoke($"✓ {it.Title} ตอน {it.Number}");
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { Log?.Invoke($"✗ {it.Title} ตอน {it.Number} — {ex.Message}"); }
+            else
+            {
+                Log?.Invoke($"✗ {it.Title} ตอน {it.Number} — ข้ามไปก่อน จะลองใหม่รอบถัดไป");
+                await ReportFailedAsync(it.Episode_Id, ct);
+            }
         }
 
         StatusChanged?.Invoke("รอบนี้เสร็จ");
         QueueChanged?.Invoke(0);
+    }
+
+    /// <summary>
+    /// Mirror one episode, re-resolving a FRESH video URL on every attempt — rongyok's Discord
+    /// links expire, so retrying the same URL is pointless. A few attempts with backoff smooth
+    /// out the source's intermittent 404s; anything still failing is left for the next cycle.
+    /// </summary>
+    private async Task<bool> MirrorEpisodeAsync(int seriesId, PendingItem it, CancellationToken ct)
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), $"netwixsync_{it.SourceKey}_{it.Number}.mp4");
+        const int attempts = 4;
+        for (int a = 1; a <= attempts; a++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var url = await _rong.GetVideoUrlAsync(seriesId, it.Number, ct);
+                if (string.IsNullOrEmpty(url)) throw new Exception("หา URL ไม่เจอ");
+
+                await DownloadAsync(url, tmp, ct);
+                await UploadAsync(it.SourceKey, it.Number, tmp, ct);
+                try { File.Delete(tmp); } catch { /* ignore */ }
+                return true;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                try { File.Delete(tmp); } catch { /* ignore */ }
+                if (a >= attempts) return false;
+                try { await Task.Delay(1000 * a, ct); } catch (OperationCanceledException) { throw; }
+            }
+        }
+        return false;
+    }
+
+    private async Task ReportFailedAsync(long episodeId, CancellationToken ct)
+    {
+        try { await _netwix.PostAsync($"/api/ingest/episode/{episodeId}/failed", null, ct); }
+        catch { /* best-effort */ }
     }
 
     private async Task<long> DownloadAsync(string url, string path, CancellationToken ct)
@@ -160,7 +195,7 @@ public sealed class NetwixSyncEngine : IDisposable
 
     // ── worklist DTOs (JSON is case-insensitive; underscores line up with source_key) ──
     private sealed record PendingResponse(int Count, List<PendingItem> Items);
-    private sealed record PendingItem(string Source_Key, int Number, string Title)
+    private sealed record PendingItem(long Episode_Id, string Source_Key, int Number, string Title)
     {
         public string SourceKey => Source_Key;
     }

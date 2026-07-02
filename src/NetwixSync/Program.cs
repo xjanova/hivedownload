@@ -39,7 +39,7 @@ string baseUrl = (Arg("--netwix") ?? Environment.GetEnvironmentVariable("NETWIX_
 string token = Arg("--token") ?? Environment.GetEnvironmentVariable("NETWIX_INGEST_TOKEN") ?? TokenFromFile();
 string source = Arg("--source") ?? "rongyok";
 int limit = int.TryParse(Arg("--limit"), out var l) ? l : 300;
-int retries = int.TryParse(Arg("--retries"), out var r) ? r : 3;
+int retries = int.TryParse(Arg("--retries"), out var r) ? r : 4;
 int loop = args.Contains("--loop") ? (int.TryParse(Arg("--loop"), out var iv) && iv > 0 ? iv : 60) : 0;
 
 if (string.IsNullOrWhiteSpace(token))
@@ -109,20 +109,8 @@ async Task<bool> RunOnce()
         i++;
         string flag = item.Requested ? $"★[ลูกค้าขอ {item.Requests}×] " : "";
         string tag = $"[{i}/{pending.Count}] {flag}{Trim(item.Title, 30)} ตอนที่ {item.Number}";
-        try
-        {
-            string? url = await ResolveVideoUrl(item.SourceKey, item.Number);
-            if (url is null) { Console.WriteLine($"  ✗ {tag} — resolve failed"); fail++; continue; }
-
-            string tmp = Path.Combine(Path.GetTempPath(), $"netwixsync_{item.SourceKey}_{item.Number}.mp4");
-            long bytes = await DownloadWithRetry(url, tmp, retries);
-            await Upload(item.SourceKey, item.Number, tmp);
-            TryDelete(tmp);
-
-            Console.WriteLine($"  ✓ {tag} — {bytes / 1024 / 1024.0:0.0} MB");
-            ok++;
-        }
-        catch (Exception ex) { Console.WriteLine($"  ✗ {tag} — {Trim(ex.Message, 80)}"); fail++; }
+        if (await MirrorEpisode(item.SourceKey, item.Number, tag)) ok++;
+        else { Console.WriteLine($"  ✗ {tag} — ข้ามไปก่อน (จะลองใหม่รอบถัดไป)"); fail++; await ReportFailed(item.Episode_Id); }
     }
     Console.WriteLine($"[{Stamp()}] done: mirrored {ok}, failed {fail}.");
     return true;
@@ -153,15 +141,32 @@ async Task<string?> ResolveVideoUrl(string seriesId, int ep)
     catch (JsonException) { return null; }
 }
 
-async Task<long> DownloadWithRetry(string url, string path, int attempts)
+// Resilient per-episode mirror: RE-RESOLVE a fresh URL on every attempt (rongyok's Discord links
+// expire, so retrying the same URL is useless) with a small backoff.
+async Task<bool> MirrorEpisode(string seriesId, int ep, string tag)
 {
-    Exception? last = null;
-    for (int a = 1; a <= attempts; a++)
+    string tmp = Path.Combine(Path.GetTempPath(), $"netwixsync_{seriesId}_{ep}.mp4");
+    for (int attempt = 1; attempt <= retries; attempt++)
     {
-        try { return await Download(url, path); }
-        catch (Exception ex) { last = ex; await Task.Delay(800 * a); }
+        try
+        {
+            string? url = await ResolveVideoUrl(seriesId, ep);   // fresh session + fresh URL
+            if (url is null) throw new Exception("หา URL ไม่เจอ");
+
+            long bytes = await Download(url, tmp);
+            await Upload(seriesId, ep, tmp);
+            TryDelete(tmp);
+            Console.WriteLine($"  ✓ {tag} — {bytes / 1024 / 1024.0:0.0} MB{(attempt > 1 ? $" (ลอง {attempt} ครั้ง)" : "")}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            TryDelete(tmp);
+            if (attempt >= retries) { Console.WriteLine($"     ↳ {Trim(ex.Message, 70)}"); return false; }
+            await Task.Delay(1000 * attempt); // 1s, 2s, 3s… then re-resolve
+        }
     }
-    throw last ?? new Exception("download failed");
+    return false;
 }
 
 async Task<long> Download(string url, string path)
@@ -171,6 +176,13 @@ async Task<long> Download(string url, string path)
     await using var fs = File.Create(path);
     await resp.Content.CopyToAsync(fs);
     return new FileInfo(path).Length;
+}
+
+// Tell NetWix we couldn't mirror this one, so it backs it off / eventually drops it.
+async Task ReportFailed(long episodeId)
+{
+    try { await netwix.PostAsync($"/api/ingest/episode/{episodeId}/failed", null); }
+    catch { /* best-effort */ }
 }
 
 async Task Upload(string seriesId, int ep, string path)
