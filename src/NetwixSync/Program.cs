@@ -79,7 +79,8 @@ int ok = 0, fail = 0, i = 0;
 foreach (var item in pending)
 {
     i++;
-    string tag = $"[{i}/{pending.Count}] {Trim(item.Title, 32)} ตอนที่ {item.Number}";
+    string flag = item.Requested ? $"★[ลูกค้าขอ {item.Requests}×] " : "";
+    string tag = $"[{i}/{pending.Count}] {flag}{Trim(item.Title, 32)} ตอนที่ {item.Number}";
     try
     {
         string? url = await ResolveVideoUrl(item.SourceKey, item.Number);
@@ -176,7 +177,7 @@ static string Trim(string? s, int n) { s ??= ""; return s.Length <= n ? s : s[..
 
 // ── DTOs ──
 record PendingResponse(int Count, List<PendingItem> Items);
-record PendingItem(long Episode_Id, string Source, string Source_Key, int Number, string Title)
+record PendingItem(long Episode_Id, string Source, string Source_Key, int Number, string Title, bool Requested = false, int Requests = 0)
 {
     public string SourceKey => Source_Key;
 }
