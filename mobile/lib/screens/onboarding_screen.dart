@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
-import '../theme/hex.dart';
+import '../theme/hex.dart' show Floating;
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
 import 'app_shell.dart';
@@ -26,18 +26,20 @@ class OnboardingScreen extends StatelessWidget {
             child: Column(
               children: [
                 const Spacer(flex: 2),
-                // hero gem cluster
+                // NetWix wordmark hero, with a soft crimson glow behind it
                 Floating(
-                  child: SizedBox(
-                    height: 140,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        const GemCrest(size: 118, icon: Icons.download_rounded),
-                        Positioned(left: 30, top: 8, child: _facet(30)),
-                        Positioned(right: 26, top: 18, child: _facet(24)),
-                        Positioned(right: 44, bottom: 6, child: _facet(18)),
-                      ],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 24),
+                    decoration: const BoxDecoration(
+                      gradient: RadialGradient(
+                        colors: [T.accentSoftGlow, Colors.transparent],
+                        radius: 0.9,
+                      ),
+                    ),
+                    child: Image.asset(
+                      'assets/brand/netwix-wordmark.png',
+                      height: 62,
+                      fit: BoxFit.contain,
                     ),
                   ),
                 ),
@@ -50,7 +52,7 @@ class OnboardingScreen extends StatelessWidget {
                   style: AppTheme.display(25, weight: FontWeight.w700, letterSpacing: -0.02),
                 ),
                 const SizedBox(height: 10),
-                Text('Series & movies — free, no ads.',
+                Text(l.pick('ซีรีส์ · หนัง · แนวตั้ง — ดูฟรี', 'Series · Movies · Shorts — free'),
                     textAlign: TextAlign.center,
                     style: AppTheme.body(13, weight: FontWeight.w600, color: T.accent)),
                 const SizedBox(height: 12),
@@ -88,11 +90,6 @@ class OnboardingScreen extends StatelessWidget {
       ),
     );
   }
-
-  Widget _facet(double s) => HexBox(
-        size: s,
-        child: const DecoratedBox(decoration: BoxDecoration(gradient: T.gemGradient)),
-      );
 
   Widget _pager() => Row(
         mainAxisAlignment: MainAxisAlignment.center,

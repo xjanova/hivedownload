@@ -52,7 +52,7 @@ class GoProScreen extends StatelessWidget {
                     Center(child: Floating(child: const GemCrest(size: 84, icon: Icons.star_rounded))),
                     const SizedBox(height: 18),
                     Center(
-                      child: Text('Hive Download Pro',
+                      child: Text('NetWix Pro',
                           style: AppTheme.display(24, weight: FontWeight.w700)),
                     ),
                     const SizedBox(height: 6),

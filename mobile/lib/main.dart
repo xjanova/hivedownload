@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import 'screens/app_shell.dart';
-import 'screens/onboarding_screen.dart';
+import 'screens/intro_screen.dart';
 import 'services/account_store.dart';
 import 'services/ad_service.dart';
 import 'services/auth_service.dart';
@@ -82,11 +81,11 @@ class HiveApp extends StatelessWidget {
       ],
       child: Consumer<AppState>(
         builder: (context, app, _) => MaterialApp(
-          title: 'Hive Download',
+          title: 'NetWix',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.dark,
           navigatorObservers: [routeObserver],
-          home: app.onboarded ? const AppShell() : const OnboardingScreen(),
+          home: const IntroScreen(),
         ),
       ),
     );

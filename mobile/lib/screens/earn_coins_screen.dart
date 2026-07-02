@@ -206,8 +206,8 @@ class EarnCoinsScreen extends StatelessWidget {
 
   void _shareReferral(BuildContext context, String code, L10n l) {
     final text = l.pick(
-      'มาดูซีรีส์ฟรีกับ Hive Download! ใช้โค้ด $code รับเหรียญฟรี\nhttps://netwix.online/r/$code',
-      'Watch series free on Hive Download! Use code $code for free coins\nhttps://netwix.online/r/$code',
+      'มาดูซีรีส์ฟรีกับ NetWix! ใช้โค้ด $code รับเหรียญฟรี\nhttps://netwix.online/r/$code',
+      'Watch series free on NetWix! Use code $code for free coins\nhttps://netwix.online/r/$code',
     );
     SharePlus.instance.share(ShareParams(text: text));
   }

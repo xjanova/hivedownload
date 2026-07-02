@@ -1,55 +1,62 @@
 import 'package:flutter/material.dart';
 
-/// Design tokens transcribed from the Hivedownload mobile design handoff
-/// (theme "honey", background tone "warm"). All accent values are centralised
-/// so re-tinting to a real brand palette is a one-file change.
+/// Design tokens for the **NetWix** brand — neon crimson→violet on a cool,
+/// cinematic near-black. All accent values are centralised so a re-tint is a
+/// one-file change. (Rebranded from the original "honey" Hive Download theme.)
 class T {
   T._();
 
-  // ---- surfaces (warm, near-black) ----
-  static const board = Color(0xFF0D0B08); // outermost canvas
-  static const screen = Color(0xFF14110B); // phone screen base
-  static const bezelTop = Color(0xFF2A2117);
-  static const bezelBottom = Color(0xFF100D09);
+  // ---- surfaces (cool, near-black) ----
+  static const board = Color(0xFF07050C); // outermost canvas
+  static const screen = Color(0xFF0B0712); // phone screen base
+  static const surface = Color(0xFF120E1A); // cards / sheets
+  static const bezelTop = Color(0xFF1C1730);
+  static const bezelBottom = Color(0xFF0A0712);
 
   // ---- text ----
-  static const textPrimary = Color(0xFFF5EEDF); // warm cream
-  static const textSecondary = Color(0xFFC9BFA9);
-  static const textMuted = Color(0xFF9A8F79);
-  static const textFaint = Color(0xFF8A8069);
-  static const textInactive = Color(0xFF7A7260);
+  static const textPrimary = Color(0xFFF4F1F8); // cool white
+  static const textSecondary = Color(0xFFC9C2D6);
+  static const textMuted = Color(0xFF938BA6);
+  static const textFaint = Color(0xFF7C7392);
+  static const textInactive = Color(0xFF655C7A);
 
   static const hairline = Color(0x14FFFFFF); // rgba(255,255,255,.08)
   static const hairlineStrong = Color(0x1AFFFFFF); // .1
 
-  // ---- accent (honey) ----
-  static const accent = Color(0xFFF5A623);
-  static const accentHi = Color(0xFFFFD766);
-  static const accentLo = Color(0xFFE07B00);
-  static const onAccent = Color(0xFF2A1C05);
-  static const accentSoft = Color(0x24F5A623); // rgba(245,166,35,.14)
-  static const accentGlow = Color(0x80F5A623); // .5
-  static const accentSoftGlow = Color(0x2EF5A623); // .18
+  // ---- accent (NetWix crimson) ----
+  static const accent = Color(0xFFFF2D55);
+  static const accentHi = Color(0xFFFF6B85);
+  static const accentLo = Color(0xFFC81E45);
+  static const onAccent = Color(0xFFFFFFFF);
+  static const accentSoft = Color(0x24FF2D55); // rgba(255,45,85,.14)
+  static const accentGlow = Color(0x80FF2D55); // .5
+  static const accentSoftGlow = Color(0x2EFF2D55); // .18
 
+  // ---- secondary (electric violet) ----
+  static const purple = Color(0xFFB026FF);
+  static const purpleHi = Color(0xFFCB6BFF);
+  static const purpleLo = Color(0xFF8B2FF0);
+
+  /// Signature crimson→violet CTA gradient.
   static const LinearGradient accentGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [accentHi, accent, accentLo],
-    stops: [0.0, 0.55, 1.0],
+    colors: [accentHi, accent, purple],
+    stops: [0.0, 0.5, 1.0],
   );
 
-  /// Faceted "gem / crystal" fill (approximation of the CSS conic-gradient).
+  /// Faceted "gem / crystal" fill (neon sweep).
   static const SweepGradient gemGradient = SweepGradient(
     center: Alignment(0.0, -0.16),
     startAngle: 3.6, // ~208deg
     endAngle: 3.6 + 6.283,
     colors: [
-      Color(0xFFFFEEBC),
-      Color(0xFFF5A623),
-      Color(0xFFA85400),
-      Color(0xFFFFD766),
-      Color(0xFFE07B00),
-      Color(0xFFFFEEBC),
+      Color(0xFFFF6B85),
+      Color(0xFFFF2D55),
+      Color(0xFF8B2FF0),
+      Color(0xFFCB6BFF),
+      Color(0xFFB026FF),
+      Color(0xFFFF6B85),
     ],
     stops: [0.0, 0.22, 0.44, 0.60, 0.80, 1.0],
   );
@@ -86,11 +93,11 @@ class T {
         ],
       );
 
-  // ---- cinematic "key-art" poster placeholder fills ----
+  // ---- cinematic "key-art" poster placeholder fills (cool neon-tinted) ----
   static const List<LinearGradient> posterFills = [
-    LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF241A12), Color(0xFF0E0B08)]),
-    LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [Color(0xFF121A1C), Color(0xFF0B0B0C)]),
-    LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF181425), Color(0xFF0C0A10)]),
+    LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF2A1220), Color(0xFF0B0712)]),
+    LinearGradient(begin: Alignment.topRight, end: Alignment.bottomLeft, colors: [Color(0xFF1A1030), Color(0xFF0A0712)]),
+    LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF201430), Color(0xFF0C0910)]),
   ];
 
   static LinearGradient posterFill(int seed) => posterFills[seed % posterFills.length];

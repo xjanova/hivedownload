@@ -282,7 +282,7 @@ class MenuScreen extends StatelessWidget {
 
   void _about(BuildContext context, L10n l) => showAboutDialog(
         context: context,
-        applicationName: 'Hive Download',
+        applicationName: 'NetWix',
         applicationVersion: l.pick('ดูฟรี · สตรีมมิ่ง', 'Free streaming'),
         children: [
           Padding(

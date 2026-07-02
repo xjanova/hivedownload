@@ -137,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(l.bi('สวัสดี', 'Hello'), style: AppTheme.body(12, color: T.textMuted)),
-              Text(l.pick('ยินดีต้อนรับ 🐝', 'Welcome 🐝'),
+              Text(l.pick('ยินดีต้อนรับสู่ NetWix', 'Welcome to NetWix'),
                   style: AppTheme.display(20, weight: FontWeight.w700)),
             ],
           ),
