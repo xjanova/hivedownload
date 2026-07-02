@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.IO;
@@ -120,6 +121,44 @@ public sealed class NetwixSyncEngine : IDisposable
 
         StatusChanged?.Invoke("รอบนี้เสร็จ");
         QueueChanged?.Invoke(0);
+    }
+
+    /// <summary>
+    /// Lightweight probe for the Save button: verify the URL + token actually reach NetWix and
+    /// are accepted, WITHOUT mirroring anything. Uses a fresh client so it reflects the settings
+    /// that were just saved, and raises the same connection/queue events the loop does so the
+    /// status dot and queue counter update too. Returns (ok, human message).
+    /// </summary>
+    public async Task<(bool ok, string message)> TestConnectionAsync(CancellationToken ct = default)
+    {
+        using var client = BuildClient();
+        if (client.BaseAddress is null)
+        {
+            ConnectionChanged?.Invoke(false);
+            return (false, "NetWix URL ยังไม่ถูกต้อง — ต้องขึ้นต้นด้วย https://");
+        }
+
+        try
+        {
+            using var resp = await client.GetAsync("/api/ingest/pending?source=rongyok&limit=300", ct);
+            if (resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                ConnectionChanged?.Invoke(false);
+                return (false, $"NetWix ปฏิเสธโทเคน (HTTP {(int)resp.StatusCode}) — ตรวจ Ingest Token อีกครั้ง");
+            }
+            resp.EnsureSuccessStatusCode();
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            var count = JsonSerializer.Deserialize<PendingResponse>(body, J)?.Items?.Count ?? 0;
+            ConnectionChanged?.Invoke(true);
+            QueueChanged?.Invoke(count);
+            return (true, $"เชื่อมต่อ NetWix ได้ ✓ — งานค้าง {count} ตอน");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            ConnectionChanged?.Invoke(false);
+            return (false, "เชื่อมต่อไม่ได้: " + ex.Message);
+        }
     }
 
     /// <summary>

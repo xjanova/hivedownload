@@ -32,8 +32,10 @@ public sealed class Db
     {
         var c = new SqliteConnection(_connString);
         c.Open();
-        // WAL keeps reads snappy while a download thread writes progress.
-        c.Execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;");
+        // WAL keeps reads snappy while a download thread writes progress; busy_timeout makes a
+        // writer wait for a lock (e.g. saving settings mid-download) instead of instantly throwing
+        // "database is locked".
+        c.Execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
         return c;
     }
 

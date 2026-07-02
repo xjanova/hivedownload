@@ -37,11 +37,7 @@ public sealed partial class NetWixSyncViewModel : ObservableObject, IDisposable
         _autoStart = settings.NetWixAutoStart;
 
         _engine = new NetwixSyncEngine(settings);
-        _engine.Log += m => OnUi(() =>
-        {
-            Log.Insert(0, $"{DateTime.Now:HH:mm:ss}  {m}");
-            while (Log.Count > 300) Log.RemoveAt(Log.Count - 1);
-        });
+        _engine.Log += AddLog;
         _engine.StatusChanged += s => OnUi(() => StatusText = s);
         _engine.QueueChanged += n => OnUi(() => QueueCount = n);
         _engine.ConnectionChanged += c => OnUi(() =>
@@ -56,13 +52,29 @@ public sealed partial class NetWixSyncViewModel : ObservableObject, IDisposable
 
     private static void OnUi(Action a) => Application.Current?.Dispatcher.Invoke(a);
 
+    private void AddLog(string m) => OnUi(() =>
+    {
+        Log.Insert(0, $"{DateTime.Now:HH:mm:ss}  {m}");
+        while (Log.Count > 300) Log.RemoveAt(Log.Count - 1);
+    });
+
+    /// <summary>Write the current field values through to the settings DB (normalizing them).</summary>
+    private void Persist()
+    {
+        _settings.NetWixUrl = (NetWixUrl ?? "").Trim();
+        _settings.NetWixToken = (Token ?? "").Trim();
+        _settings.NetWixInterval = IntervalSeconds;
+        _settings.NetWixAutoStart = AutoStart;
+    }
+
     [RelayCommand]
     private void Start()
     {
-        Save();
+        Persist();
         _engine.Start();
         IsRunning = true;
         StatusText = "กำลังเชื่อมต่อ NetWix…";
+        AddLog("▶ เริ่มซิงค์");
     }
 
     [RelayCommand]
@@ -72,15 +84,55 @@ public sealed partial class NetWixSyncViewModel : ObservableObject, IDisposable
         IsRunning = false;
         IsConnected = false;
         ConnectionLabel = "หยุดแล้ว";
+        AddLog("■ หยุดซิงค์แล้ว");
     }
 
+    /// <summary>
+    /// Save the connection settings and immediately verify them against NetWix, so the user gets
+    /// clear feedback (the old Save was silent — you couldn't tell if it worked or if the token
+    /// was even valid).
+    /// </summary>
     [RelayCommand]
-    private void Save()
+    private async Task SaveAsync()
     {
-        _settings.NetWixUrl = (NetWixUrl ?? "").Trim();
-        _settings.NetWixToken = (Token ?? "").Trim();
-        _settings.NetWixInterval = IntervalSeconds;
-        _settings.NetWixAutoStart = AutoStart;
+        try
+        {
+            Persist();
+        }
+        catch (Exception ex)
+        {
+            StatusText = "บันทึกไม่สำเร็จ: " + ex.Message;
+            AddLog("✗ บันทึกไม่สำเร็จ: " + ex.Message);
+            return;
+        }
+
+        // reflect the normalized (trimmed) values back so the UI shows exactly what was stored
+        NetWixUrl = _settings.NetWixUrl;
+        Token = _settings.NetWixToken;
+        IntervalSeconds = _settings.NetWixInterval;
+
+        AddLog("💾 บันทึกการตั้งค่าแล้ว");
+
+        if (string.IsNullOrWhiteSpace(_settings.NetWixToken))
+        {
+            StatusText = "ยังไม่ได้ใส่ Ingest Token";
+            AddLog("⚠ ยังไม่ได้ใส่ Ingest Token (ดูได้จากเซิร์ฟเวอร์: /home/admin/.netwix_ingest_token)");
+            return;
+        }
+
+        StatusText = "กำลังทดสอบการเชื่อมต่อกับ NetWix…";
+        AddLog("… กำลังทดสอบการเชื่อมต่อกับ NetWix");
+        try
+        {
+            var (ok, message) = await _engine.TestConnectionAsync();
+            StatusText = message;
+            AddLog((ok ? "✓ " : "✗ ") + message);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "ทดสอบไม่สำเร็จ: " + ex.Message;
+            AddLog("✗ " + ex.Message);
+        }
     }
 
     public void Dispose() => _engine.Dispose();
