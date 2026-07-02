@@ -31,7 +31,7 @@ public sealed partial class EpisodeUpdateItem : ObservableObject
 public sealed partial class WhatsNewViewModel : ObservableObject
 {
     private readonly Db _db;
-    private readonly RongYokClient _client;
+    private readonly SourceRegistry _registry;
     private readonly DownloadManager _downloads;
     private readonly Action<Series> _openDetail;
 
@@ -44,10 +44,10 @@ public sealed partial class WhatsNewViewModel : ObservableObject
     public bool HasUpdates => Updates.Count > 0;
     public string Headline { get; }
 
-    public WhatsNewViewModel(ScanResult result, Db db, RongYokClient client, DownloadManager downloads, Action<Series> openDetail)
+    public WhatsNewViewModel(ScanResult result, Db db, SourceRegistry registry, DownloadManager downloads, Action<Series> openDetail)
     {
         _db = db;
-        _client = client;
+        _registry = registry;
         _downloads = downloads;
         _openDetail = openDetail;
 
@@ -69,7 +69,7 @@ public sealed partial class WhatsNewViewModel : ObservableObject
         if (item is null || item.Queued) return;
         try
         {
-            var nums = await Task.Run(() => _client.FetchEpisodeNumbersAsync(item.Series.Id));
+            var nums = await Task.Run(() => _registry.For(item.Series).FetchEpisodeNumbersAsync(item.Series));
             if (nums.Count == 0) return;
             item.Series.EpisodesCount = nums.Count;
             _db.UpdateSeriesEpisodeCount(item.Series.Id, nums.Count);

@@ -8,6 +8,15 @@ public sealed class Series
 {
     public int Id { get; set; }
 
+    /// <summary>Which site this series came from — see <see cref="SourceIds"/>. Defaults to rongyok.</summary>
+    public string SourceId { get; set; } = SourceIds.RongYok;
+
+    /// <summary>
+    /// Source-specific key needed to resolve the series later. For wow-drama this is the WordPress
+    /// slug (e.g. "only-for-love-2023"); rongyok doesn't need it (the numeric <see cref="Id"/> is enough).
+    /// </summary>
+    public string Slug { get; set; } = "";
+
     /// <summary>Raw title from the site (often carries a trailing "th" language tag).</summary>
     public string Title { get; set; } = "";
 

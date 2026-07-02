@@ -14,9 +14,12 @@ namespace RongYokDownloader.Services;
 ///   3. GET /watch/get_video.php?series_id&amp;ep → {"ok":true,"video_url":"&lt;discord mp4&gt;"}
 /// Video files themselves live on Discord's CDN (signed, expiring, plain MP4).
 /// </summary>
-public sealed partial class RongYokClient
+public sealed partial class RongYokClient : IMediaSource
 {
     public const string BaseUrl = "https://rongyok.com";
+
+    public string SourceId => SourceIds.RongYok;
+    public string DisplayName => "โรงหยก";
 
     private readonly HttpClient _http;
 
@@ -50,9 +53,10 @@ public sealed partial class RongYokClient
 
     // ------------------------------------------------------------- 1. catalog
 
-    /// <summary>Downloads and parses the full catalog (~2,300+ series).</summary>
-    public async Task<List<Series>> FetchCatalogAsync(CancellationToken ct = default)
+    /// <summary>Downloads and parses the full catalog (~2,300+ series) — one page, whole catalogue.</summary>
+    public async Task<List<Series>> FetchCatalogAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
+        progress?.Report("โรงหยก: กำลังดึงแคตตาล็อก…");
         string html = await _http.GetStringAsync($"{BaseUrl}/category?category=all", ct);
         string? arrayJson = JsonExtract.CatalogArray(html);
         if (arrayJson is null)
@@ -80,6 +84,7 @@ public sealed partial class RongYokClient
         var s = new Series
         {
             Id = id,
+            SourceId = SourceIds.RongYok,
             Title = rawTitle,
             Description = GetStr(el, "description"),
             PosterUrl = ToAbsolute(posterRel),
@@ -118,6 +123,10 @@ public sealed partial class RongYokClient
 
     // ------------------------------------------------------- 2. episode list
 
+    /// <summary><see cref="IMediaSource"/> entry point — resolves the series to its numeric id.</summary>
+    public Task<List<int>> FetchEpisodeNumbersAsync(Series series, CancellationToken ct = default)
+        => FetchEpisodeNumbersAsync(series.Id, ct);
+
     /// <summary>
     /// Returns the episode numbers for a series (and thus the count).
     /// Parses the embedded <c>episodes</c> array; falls back to 1..episodes_count.
@@ -152,6 +161,15 @@ public sealed partial class RongYokClient
     }
 
     // --------------------------------------------------------- 3. video url
+
+    /// <summary><see cref="IMediaSource"/> entry point — rongyok serves a plain progressive MP4.</summary>
+    public async Task<StreamInfo?> ResolveEpisodeAsync(Series series, int episodeNumber, CancellationToken ct = default)
+    {
+        string? url = await GetVideoUrlAsync(series.Id, episodeNumber, ct);
+        return string.IsNullOrEmpty(url)
+            ? null
+            : new StreamInfo { Kind = StreamKind.Mp4Progressive, Url = url };
+    }
 
     /// <summary>Resolves the direct (Discord CDN) MP4 URL for one episode. Null if unavailable.</summary>
     public async Task<string?> GetVideoUrlAsync(int seriesId, int ep, CancellationToken ct = default)

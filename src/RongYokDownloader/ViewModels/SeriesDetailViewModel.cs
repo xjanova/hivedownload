@@ -25,7 +25,7 @@ public sealed partial class EpisodeSelectItem : ObservableObject
 public sealed partial class SeriesDetailViewModel : ObservableObject
 {
     private readonly Db _db;
-    private readonly RongYokClient _client;
+    private readonly IMediaSource _source;
     private readonly DownloadManager _downloads;
     private readonly SettingsStore _settings;
 
@@ -44,11 +44,11 @@ public sealed partial class SeriesDetailViewModel : ObservableObject
     public int SelectedCount => Episodes.Count(e => e.IsSelected);
     public bool HasEpisodes => Episodes.Count > 0;
 
-    public SeriesDetailViewModel(Series series, Db db, RongYokClient client, DownloadManager downloads, SettingsStore settings)
+    public SeriesDetailViewModel(Series series, Db db, IMediaSource source, DownloadManager downloads, SettingsStore settings)
     {
         _series = series;
         _db = db;
-        _client = client;
+        _source = source;
         _downloads = downloads;
         _settings = settings;
     }
@@ -61,7 +61,7 @@ public sealed partial class SeriesDetailViewModel : ObservableObject
             IsBusy = true;
             StatusMessage = "กำลังโหลดรายชื่อตอน…";
 
-            var numbers = await Task.Run(() => _client.FetchEpisodeNumbersAsync(Series.Id));
+            var numbers = await Task.Run(() => _source.FetchEpisodeNumbersAsync(Series));
             if (numbers.Count == 0)
             {
                 StatusMessage = "ไม่พบตอนสำหรับเรื่องนี้";
@@ -166,12 +166,13 @@ public sealed partial class SeriesDetailViewModel : ObservableObject
             var cachePath = Path.Combine(cacheDir, $"{Series.Id}_ep1.mp4");
             if (File.Exists(cachePath) && new FileInfo(cachePath).Length > 200_000) return cachePath;
 
-            // 3) download episode 1 once
-            var url = await _client.GetVideoUrlAsync(Series.Id, 1, ct);
-            if (string.IsNullOrEmpty(url)) return null;
+            // 3) download episode 1 once — only for plain-file sources; HLS previews aren't worth it
+            var stream = await _source.ResolveEpisodeAsync(Series, 1, ct);
+            if (stream is null || stream.Kind != StreamKind.Mp4Progressive || string.IsNullOrEmpty(stream.Url))
+                return null;
 
             var part = cachePath + ".part";
-            using (var resp = await _client.GetStreamResponseAsync(url, 0, ct))
+            using (var resp = await _source.GetStreamResponseAsync(stream.Url, 0, ct))
             {
                 resp.EnsureSuccessStatusCode();
                 await using var fs = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);

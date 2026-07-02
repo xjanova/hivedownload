@@ -14,7 +14,7 @@ namespace RongYokDownloader.ViewModels;
 public sealed partial class MainViewModel : ObservableObject
 {
     private readonly Db _db;
-    private readonly RongYokClient _client;
+    private readonly SourceRegistry _registry;
     private readonly SettingsStore _settings;
     private readonly DownloadManager _downloads;
 
@@ -38,11 +38,15 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _db = new Db(dbPath);
         _settings = new SettingsStore(_db);
-        _client = new RongYokClient();
-        _downloads = new DownloadManager(_client, _db, _settings);   // constructed on the UI thread
+        _registry = new SourceRegistry(new IMediaSource[]
+        {
+            new RongYokClient(),
+            new WowDramaClient(),
+        });
+        _downloads = new DownloadManager(_registry, new HlsDownloader(), _db, _settings);   // on the UI thread
         _downloads.Changed += () => ActiveDownloads = _downloads.Jobs.Count(j => j.IsActive);
 
-        Catalog = new CatalogViewModel(_db, _client);
+        Catalog = new CatalogViewModel(_db, _registry);
         Catalog.OpenDetailRequested += OpenDetail;
 
         DownloadsPage = new DownloadsViewModel(_downloads);
@@ -116,10 +120,12 @@ public sealed partial class MainViewModel : ObservableObject
         try
         {
             IsScanning = true;
-            ScanStatus = "กำลังดึงรายการล่าสุดจากเว็บ…";
+            var source = Catalog.ActiveSource;
+            ScanStatus = $"กำลังดึงรายการล่าสุดจาก {source.DisplayName}…";
 
-            var known = _db.GetAllSeriesIds();
-            var fresh = await Task.Run(() => _client.FetchCatalogAsync());
+            var known = _db.GetAllSeriesIds(source.SourceId);
+            var prog = new Progress<string>(msg => ScanStatus = msg);
+            var fresh = await Task.Run(() => source.FetchCatalogAsync(prog));
 
             var result = new ScanResult();
             result.NewSeries.AddRange(fresh.Where(s => !known.Contains(s.Id)).OrderByDescending(s => s.Id));
@@ -128,14 +134,14 @@ public sealed partial class MainViewModel : ObservableObject
             Catalog.ReloadFromDb();
 
             // Check tracked series for new episodes.
-            var tracked = _db.GetTrackedSeries();
+            var tracked = _db.GetTrackedSeries(source.SourceId);
             for (int i = 0; i < tracked.Count; i++)
             {
                 var s = tracked[i];
                 ScanStatus = $"กำลังตรวจตอนใหม่ {i + 1}/{tracked.Count} — {s.CleanTitle}";
                 try
                 {
-                    var nums = await Task.Run(() => _client.FetchEpisodeNumbersAsync(s.Id));
+                    var nums = await Task.Run(() => source.FetchEpisodeNumbersAsync(s));
                     if (nums.Count > s.EpisodesCount && s.EpisodesCount > 0)
                     {
                         result.EpisodeUpdates.Add(new EpisodeUpdate { Series = s, OldCount = s.EpisodesCount, NewCount = nums.Count });
@@ -158,7 +164,7 @@ public sealed partial class MainViewModel : ObservableObject
             else
             {
                 ScanStatus = $"พบของใหม่: ซีรี่ส์ {result.NewSeries.Count} · ตอนใหม่ {result.EpisodeUpdates.Count} เรื่อง";
-                var whatsNew = new WhatsNewViewModel(result, _db, _client, _downloads, OpenDetail);
+                var whatsNew = new WhatsNewViewModel(result, _db, _registry, _downloads, OpenDetail);
                 ShowWhatsNewRequested?.Invoke(whatsNew);
             }
         }
@@ -174,7 +180,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void OpenDetail(Series s)
     {
-        var vm = new SeriesDetailViewModel(s, _db, _client, _downloads, _settings);
+        var vm = new SeriesDetailViewModel(s, _db, _registry.For(s), _downloads, _settings);
         vm.BackRequested += ShowCatalog;
         vm.GoToDownloadsRequested += ShowDownloads;
         vm.WatchEpisodeRequested += ep => OpenPlayerAt(s, ep, stream: true);
@@ -186,7 +192,7 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Open the player for a series pointed straight at one episode (double-click-to-watch).</summary>
     private void OpenPlayerAt(Series s, int episodeNumber, bool stream)
     {
-        var vm = new PlayerViewModel(s, _db, _settings, _downloads, _client);
+        var vm = new PlayerViewModel(s, _db, _settings, _downloads, _registry.For(s));
         vm.BackRequested += () => OpenDetail(s);   // "back" returns to the series detail
         SetNav(0);
         CurrentPage = vm;
@@ -196,7 +202,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void OpenPlayer(Series s)
     {
-        var vm = new PlayerViewModel(s, _db, _settings, _downloads, _client);
+        var vm = new PlayerViewModel(s, _db, _settings, _downloads, _registry.For(s));
         vm.BackRequested += ShowLibrary;
         SetNav(2);
         CurrentPage = vm;

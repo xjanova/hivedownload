@@ -39,6 +39,13 @@
 
         <!-- search + filters -->
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,14">
+            <!-- source picker (โรงหยก / wow-drama / …) -->
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                <TextBlock Text="แหล่ง" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <ListBox Style="{StaticResource ChipList}" ItemsSource="{Binding SourceNames}"
+                         SelectedIndex="{Binding SelectedSourceIndex, Mode=TwoWay}" />
+            </StackPanel>
+
             <Grid>
                 <TextBox x:Name="Search" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged, Delay=200}" />
                 <TextBlock Text="ค้นหาชื่อเรื่อง…" Foreground="{StaticResource TextMuted}" Margin="12,0,0,0"

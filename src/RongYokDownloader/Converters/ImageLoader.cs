@@ -34,7 +34,8 @@ public static class ImageLoader
         var c = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
         c.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36");
-        c.DefaultRequestHeaders.Referrer = new Uri("https://rongyok.com/");
+        // NB: no global Referer — it's set per request to the image's own origin (below),
+        // because some hosts (wow-drama) 403 a foreign Referer.
         return c;
     }
 
@@ -65,7 +66,14 @@ public static class ImageLoader
         {
             byte[] bytes;
             if (url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-                bytes = await Http.GetByteArrayAsync(url);
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                if (Uri.TryCreate(url, UriKind.Absolute, out var u))
+                    req.Headers.Referrer = new Uri($"{u.Scheme}://{u.Host}/");   // same-origin referer
+                using var resp = await Http.SendAsync(req);
+                resp.EnsureSuccessStatusCode();
+                bytes = await resp.Content.ReadAsByteArrayAsync();
+            }
             else if (File.Exists(url))
                 bytes = await File.ReadAllBytesAsync(url);
             else

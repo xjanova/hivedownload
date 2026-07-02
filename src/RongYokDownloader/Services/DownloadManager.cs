@@ -16,7 +16,8 @@ namespace RongYokDownloader.Services;
 /// </summary>
 public sealed class DownloadManager
 {
-    private readonly RongYokClient _client;
+    private readonly SourceRegistry _registry;
+    private readonly HlsDownloader _hls;
     private readonly Db _db;
     private readonly SettingsStore _settings;
 
@@ -38,9 +39,10 @@ public sealed class DownloadManager
     /// <summary>Raised (on the UI thread) when an episode download fails: (seriesId, episodeNumber).</summary>
     public event Action<int, int>? EpisodeFailed;
 
-    public DownloadManager(RongYokClient client, Db db, SettingsStore settings)
+    public DownloadManager(SourceRegistry registry, HlsDownloader hls, Db db, SettingsStore settings)
     {
-        _client = client;
+        _registry = registry;
+        _hls = hls;
         _db = db;
         _settings = settings;
         _ui = SynchronizationContext.Current ?? new SynchronizationContext();
@@ -117,7 +119,8 @@ public sealed class DownloadManager
         Jobs.Remove(job);
         if (job.Status != DownloadStatus.Completed)
         {
-            TryDelete(job.FilePath + ".part");
+            TryDelete(job.FilePath + ".part");        // mp4 (rongyok)
+            TryDelete(job.FilePath + ".ts.part");     // hls scratch (wow-drama)
         }
         Changed?.Invoke();
     }
@@ -161,12 +164,17 @@ public sealed class DownloadManager
     {
         try
         {
-            // Always re-resolve the (signed, short-lived) CDN URL at attempt time.
-            string? url = await _client.GetVideoUrlAsync(job.Series.Id, job.EpisodeNumber, ct);
-            if (string.IsNullOrEmpty(url))
+            var source = _registry.For(job.Series);
+
+            // Always re-resolve the (signed, short-lived) stream at attempt time.
+            var stream = await source.ResolveEpisodeAsync(job.Series, job.EpisodeNumber, ct);
+            if (stream is null || string.IsNullOrEmpty(stream.Url))
                 throw new InvalidOperationException("ไม่พบลิงก์วิดีโอสำหรับตอนนี้ (อาจยังไม่มีไฟล์บนเซิร์ฟเวอร์)");
 
-            await DownloadToFileAsync(job, url, ct);
+            if (stream.Kind == StreamKind.Hls)
+                await DownloadHlsAsync(job, stream, ct);
+            else
+                await DownloadToFileAsync(job, source, stream.Url, ct);
 
             Complete(job, () =>
             {
@@ -212,13 +220,28 @@ public sealed class DownloadManager
 
     // ------------------------------------------------------------ the bytes
 
-    private async Task DownloadToFileAsync(DownloadJob job, string url, CancellationToken ct)
+    /// <summary>HLS episodes (wow-drama): fetch + strip + mux via <see cref="HlsDownloader"/>.</summary>
+    private async Task DownloadHlsAsync(DownloadJob job, StreamInfo stream, CancellationToken ct)
+    {
+        var progress = new Progress<HlsProgress>(p => Ui(() =>
+        {
+            job.DownloadedBytes = p.ReceivedBytes;
+            // total is unknown up front — estimate from the fraction so the size label isn't blank
+            job.TotalBytes = p.Fraction > 0.01 ? (long)(p.ReceivedBytes / p.Fraction) : 0;
+            job.Progress = Math.Clamp(p.Fraction, 0, 1);
+            job.SpeedBytesPerSec = p.SpeedBytesPerSec;
+        }));
+
+        await _hls.DownloadAsync(stream, job.FilePath, progress, ct);
+    }
+
+    private async Task DownloadToFileAsync(DownloadJob job, IMediaSource source, string url, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(job.FilePath)!);
         string part = job.FilePath + ".part";
         long existing = File.Exists(part) ? new FileInfo(part).Length : 0;
 
-        using var resp = await _client.GetStreamResponseAsync(url, existing, ct);
+        using var resp = await source.GetStreamResponseAsync(url, existing, ct);
 
         bool resuming = existing > 0 && resp.StatusCode == HttpStatusCode.PartialContent;
         if (existing > 0 && !resuming) existing = 0; // server ignored Range → start over
@@ -296,7 +319,7 @@ public sealed class DownloadManager
                 string posterPath = Path.Combine(folder, "poster.jpg");
                 if (!File.Exists(posterPath))
                 {
-                    using var resp = await _client.GetStreamResponseAsync(series.JpgUrl, 0, CancellationToken.None);
+                    using var resp = await _registry.For(series).GetStreamResponseAsync(series.JpgUrl, 0, CancellationToken.None);
                     if (resp.IsSuccessStatusCode)
                     {
                         await using var fs = new FileStream(posterPath, FileMode.Create, FileAccess.Write, FileShare.None);

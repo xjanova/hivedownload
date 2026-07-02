@@ -13,7 +13,7 @@ public sealed partial class CatalogViewModel : ObservableObject
     private const int PageSize = 48;
 
     private readonly Db _db;
-    private readonly RongYokClient _client;
+    private readonly SourceRegistry _registry;
 
     private List<Series> _all = new();
     private List<Series> _filtered = new();
@@ -23,6 +23,21 @@ public sealed partial class CatalogViewModel : ObservableObject
     public event Action<Series>? OpenDetailRequested;
 
     public ObservableCollection<Series> Items { get; } = new();
+
+    /// <summary>Display names for the source picker (โรงหยก / wow-drama / …).</summary>
+    public IReadOnlyList<string> SourceNames { get; }
+
+    /// <summary>Index into the source picker; changing it swaps the browsed site.</summary>
+    [ObservableProperty] private int _selectedSourceIndex;
+
+    /// <summary>The source currently being browsed.</summary>
+    public IMediaSource ActiveSource => _registry.All[Math.Clamp(SelectedSourceIndex, 0, _registry.All.Count - 1)];
+
+    partial void OnSelectedSourceIndexChanged(int value)
+    {
+        OnPropertyChanged(nameof(ActiveSource));
+        _ = SwitchSourceAsync();
+    }
 
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _statusMessage = "";
@@ -48,28 +63,45 @@ public sealed partial class CatalogViewModel : ObservableObject
     [ObservableProperty] private int _sortIndex;
     partial void OnSortIndexChanged(int value) => ApplyFilter();
 
-    public CatalogViewModel(Db db, RongYokClient client)
+    public CatalogViewModel(Db db, SourceRegistry registry)
     {
         _db = db;
-        _client = client;
+        _registry = registry;
+        SourceNames = registry.All.Select(s => s.DisplayName).ToList();
     }
 
-    /// <summary>Called the first time the page is shown.</summary>
+    /// <summary>Called each time the page is shown — loads the active source from the DB.</summary>
     [RelayCommand]
     public async Task LoadAsync()
     {
         if (_all.Count > 0) return;                 // already loaded this session
-        _all = _db.GetAllSeries();
-        if (_all.Count == 0)
+        await LoadActiveSourceAsync(coldFetchIfEmpty: true);
+    }
+
+    private async Task LoadActiveSourceAsync(bool coldFetchIfEmpty)
+    {
+        _all = _db.GetAllSeries(ActiveSource.SourceId);
+        if (_all.Count == 0 && coldFetchIfEmpty)
+        {
             await RefreshAsync();                   // cold start → pull from the site
+        }
         else
         {
             ApplyFilter();
-            StatusMessage = $"โหลดจากฐานข้อมูล {_all.Count} เรื่อง";
+            StatusMessage = _all.Count == 0
+                ? $"ยังไม่มีข้อมูล {ActiveSource.DisplayName} — กด 'รีเฟรช' เพื่อดึงจากเว็บ"
+                : $"{ActiveSource.DisplayName}: {_all.Count} เรื่อง";
         }
     }
 
-    /// <summary>Re-fetch the whole catalog from rongyok.com and cache it in SQLite.</summary>
+    /// <summary>User picked a different source in the dropdown.</summary>
+    private async Task SwitchSourceAsync()
+    {
+        if (IsBusy) return;
+        await LoadActiveSourceAsync(coldFetchIfEmpty: false);
+    }
+
+    /// <summary>Re-fetch the whole catalog for the active source and cache it in SQLite.</summary>
     [RelayCommand]
     public async Task RefreshAsync()
     {
@@ -77,10 +109,12 @@ public sealed partial class CatalogViewModel : ObservableObject
         try
         {
             IsBusy = true;
-            StatusMessage = "กำลังดึงรายการซีรี่ส์จากเว็บ…";
-            var list = await Task.Run(() => _client.FetchCatalogAsync());
+            StatusMessage = $"กำลังดึงรายการซีรี่ส์จาก {ActiveSource.DisplayName}…";
+            var source = ActiveSource;
+            var prog = new Progress<string>(msg => StatusMessage = msg);
+            var list = await Task.Run(() => source.FetchCatalogAsync(prog));
             _db.UpsertSeries(list);
-            _all = _db.GetAllSeries();
+            _all = _db.GetAllSeries(source.SourceId);
             ApplyFilter();
             StatusMessage = $"อัปเดตแล้ว {_all.Count} เรื่อง";
         }
@@ -97,7 +131,7 @@ public sealed partial class CatalogViewModel : ObservableObject
     /// <summary>Re-read the catalog from SQLite (after a scan added new series) and refresh the grid.</summary>
     public void ReloadFromDb()
     {
-        _all = _db.GetAllSeries();
+        _all = _db.GetAllSeries(ActiveSource.SourceId);
         ApplyFilter();
     }
 

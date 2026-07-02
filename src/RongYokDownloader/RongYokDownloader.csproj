@@ -28,6 +28,19 @@
   </ItemGroup>
 
   <!--
+    Bundle ffmpeg for the HLS→mp4 mux step (wow-drama). Drop ffmpeg.exe into
+    src\RongYokDownloader\tools\ffmpeg\ and it is copied next to the app. If it's
+    absent the app falls back to an ffmpeg found on PATH (see FfmpegLocator).
+    The binary is intentionally NOT committed (large); see tools\ffmpeg\README.md.
+  -->
+  <ItemGroup>
+    <None Include="tools\ffmpeg\**\*" Exclude="tools\ffmpeg\README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>tools\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
+  <!--
     Workaround for the WPF markup-compile bug: the temporary project
     (*_wpftmp.csproj) lists EVERY Roslyn-version variant of an analyzer package
     (CommunityToolkit.Mvvm ships roslyn4.0 / roslyn4.3 / roslyn4.12 copies), so

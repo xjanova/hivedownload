@@ -43,6 +43,8 @@ public sealed class Db
         c.Execute("""
             CREATE TABLE IF NOT EXISTS series (
                 id              INTEGER PRIMARY KEY,
+                source_id       TEXT NOT NULL DEFAULT 'rongyok',
+                slug            TEXT NOT NULL DEFAULT '',
                 title           TEXT NOT NULL DEFAULT '',
                 clean_title     TEXT NOT NULL DEFAULT '',
                 description     TEXT NOT NULL DEFAULT '',
@@ -76,6 +78,21 @@ public sealed class Db
 
             CREATE INDEX IF NOT EXISTS ix_episodes_series ON episodes(series_id);
             """);
+
+        // Migrate databases created before multi-source support: add the new series columns
+        // (existing rows keep the 'rongyok' default) so old installs upgrade seamlessly.
+        MigrateAddColumn(c, "series", "source_id", "TEXT NOT NULL DEFAULT 'rongyok'");
+        MigrateAddColumn(c, "series", "slug", "TEXT NOT NULL DEFAULT ''");
+        c.Execute("CREATE INDEX IF NOT EXISTS ix_series_source ON series(source_id);");
+    }
+
+    /// <summary>Adds a column only if it isn't already there (SQLite has no ADD COLUMN IF NOT EXISTS).</summary>
+    private static void MigrateAddColumn(SqliteConnection c, string table, string column, string decl)
+    {
+        var cols = c.Query<string>($"SELECT name FROM pragma_table_info('{table}');")
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!cols.Contains(column))
+            c.Execute($"ALTER TABLE {table} ADD COLUMN {column} {decl};");
     }
 
     // ---------------------------------------------------------------- series
@@ -85,9 +102,11 @@ public sealed class Db
         using var c = Open();
         using var tx = c.BeginTransaction();
         const string sql = """
-            INSERT INTO series (id,title,clean_title,description,type,poster_url,jpg_url,view_count,created_at,episodes_count,year)
-            VALUES (@Id,@Title,@CleanTitle,@Description,@Type,@PosterUrl,@JpgUrl,@ViewCount,@CreatedAt,@EpisodesCount,@Year)
+            INSERT INTO series (id,source_id,slug,title,clean_title,description,type,poster_url,jpg_url,view_count,created_at,episodes_count,year)
+            VALUES (@Id,@SourceId,@Slug,@Title,@CleanTitle,@Description,@Type,@PosterUrl,@JpgUrl,@ViewCount,@CreatedAt,@EpisodesCount,@Year)
             ON CONFLICT(id) DO UPDATE SET
+                source_id=excluded.source_id,
+                slug=CASE WHEN excluded.slug<>'' THEN excluded.slug ELSE series.slug END,
                 title=excluded.title,
                 clean_title=excluded.clean_title,
                 description=CASE WHEN excluded.description<>'' THEN excluded.description ELSE series.description END,
@@ -103,7 +122,7 @@ public sealed class Db
         {
             c.Execute(sql, new
             {
-                s.Id, s.Title, s.CleanTitle, s.Description, Type = (int)s.Type,
+                s.Id, s.SourceId, s.Slug, s.Title, s.CleanTitle, s.Description, Type = (int)s.Type,
                 s.PosterUrl, s.JpgUrl, s.ViewCount, s.CreatedAt, s.EpisodesCount, s.Year
             }, tx);
         }
@@ -122,12 +141,24 @@ public sealed class Db
         c.Execute("UPDATE series SET poster_local=@path WHERE id=@id;", new { id = seriesId, path });
     }
 
+    private const string SeriesColumns =
+        "id,source_id AS SourceId,slug AS Slug,title,clean_title AS CleanTitle,description,type," +
+        "poster_url AS PosterUrl,jpg_url AS JpgUrl,poster_local AS PosterLocalPath," +
+        "view_count AS ViewCount,created_at AS CreatedAt,episodes_count AS EpisodesCount,year";
+
     public List<Series> GetAllSeries()
     {
         using var c = Open();
+        return c.Query<Series>($"SELECT {SeriesColumns} FROM series ORDER BY id DESC;").ToList();
+    }
+
+    /// <summary>All series for one source only (the catalog shows one source at a time).</summary>
+    public List<Series> GetAllSeries(string sourceId)
+    {
+        using var c = Open();
         return c.Query<Series>(
-            "SELECT id,title,clean_title AS CleanTitle,description,type,poster_url AS PosterUrl,jpg_url AS JpgUrl,poster_local AS PosterLocalPath,view_count AS ViewCount,created_at AS CreatedAt,episodes_count AS EpisodesCount,year FROM series ORDER BY id DESC;")
-            .ToList();
+            $"SELECT {SeriesColumns} FROM series WHERE source_id=@sourceId ORDER BY id DESC;",
+            new { sourceId }).ToList();
     }
 
     public int SeriesCount()
@@ -192,7 +223,7 @@ public sealed class Db
     {
         using var c = Open();
         return c.Query<Series>("""
-            SELECT s.id,s.title,s.clean_title AS CleanTitle,s.description,s.type,
+            SELECT s.id,s.source_id AS SourceId,s.slug AS Slug,s.title,s.clean_title AS CleanTitle,s.description,s.type,
                    s.poster_url AS PosterUrl,s.jpg_url AS JpgUrl,s.poster_local AS PosterLocalPath,
                    s.view_count AS ViewCount,s.created_at AS CreatedAt,s.episodes_count AS EpisodesCount,s.year
             FROM series s
@@ -215,10 +246,8 @@ public sealed class Db
     public List<Series> GetTrackedSeries()
     {
         using var c = Open();
-        return c.Query<Series>("""
-            SELECT id,title,clean_title AS CleanTitle,description,type,
-                   poster_url AS PosterUrl,jpg_url AS JpgUrl,poster_local AS PosterLocalPath,
-                   view_count AS ViewCount,created_at AS CreatedAt,episodes_count AS EpisodesCount,year
+        return c.Query<Series>($"""
+            SELECT {SeriesColumns}
             FROM series
             WHERE episodes_count > 0
                OR id IN (SELECT DISTINCT series_id FROM episodes)
@@ -231,6 +260,17 @@ public sealed class Db
         using var c = Open();
         return c.Query<int>("SELECT id FROM series;").ToHashSet();
     }
+
+    /// <summary>Known series ids for one source — used to spot brand-new series during a scan.</summary>
+    public HashSet<int> GetAllSeriesIds(string sourceId)
+    {
+        using var c = Open();
+        return c.Query<int>("SELECT id FROM series WHERE source_id=@sourceId;", new { sourceId }).ToHashSet();
+    }
+
+    /// <summary>Tracked series (episode list loaded or has downloads) for a single source.</summary>
+    public List<Series> GetTrackedSeries(string sourceId)
+        => GetTrackedSeries().Where(s => s.SourceId == sourceId).ToList();
 
     // -------------------------------------------------------------- settings
 

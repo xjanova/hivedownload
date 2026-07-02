@@ -34,7 +34,7 @@ public sealed partial class PlayerViewModel : ObservableObject
     private readonly Db _db;
     private readonly SettingsStore _settings;
     private readonly DownloadManager _downloads;
-    private readonly RongYokClient _client;
+    private readonly IMediaSource _source;
 
     private int _autoPlayEp;   // episode the user tapped to download; auto-play it once ready
     private int _startEpisode; // when opened for a specific episode (0 = default first)
@@ -67,13 +67,13 @@ public sealed partial class PlayerViewModel : ObservableObject
 
     private string Title => string.IsNullOrWhiteSpace(Series.CleanTitle) ? Series.Title : Series.CleanTitle;
 
-    public PlayerViewModel(Series series, Db db, SettingsStore settings, DownloadManager downloads, RongYokClient client)
+    public PlayerViewModel(Series series, Db db, SettingsStore settings, DownloadManager downloads, IMediaSource source)
     {
         _series = series;
         _db = db;
         _settings = settings;
         _downloads = downloads;
-        _client = client;
+        _source = source;
         _prefetch = _settings.PrefetchAhead;
         _streamMode = _settings.StreamMode;
         _downloads.EpisodeCompleted += OnEpisodeCompleted;
@@ -181,15 +181,20 @@ public sealed partial class PlayerViewModel : ObservableObject
     {
         try
         {
-            var url = await _client.GetVideoUrlAsync(Series.Id, ep.EpisodeNumber);
-            if (string.IsNullOrEmpty(url))
+            var stream = await _source.ResolveEpisodeAsync(Series, ep.EpisodeNumber);
+
+            // WPF's MediaElement can't play HLS — for those sources fall back to
+            // download-then-autoplay (the finished .mp4 is playable).
+            if (stream is null || stream.Kind != StreamKind.Mp4Progressive || string.IsNullOrEmpty(stream.Url))
             {
-                WaitingEpisodeFailed?.Invoke(ep.EpisodeNumber);
+                if (!ep.IsBusy) StartDownload(ep);
+                _autoPlayEp = ep.EpisodeNumber;
                 return;
             }
+
             foreach (var e in Episodes) e.IsCurrent = ReferenceEquals(e, ep);
             CurrentEpisodeNumber = ep.EpisodeNumber;
-            CurrentFilePath = url;   // http URL — the view streams it via MediaElement
+            CurrentFilePath = stream.Url;   // http URL — the view streams it via MediaElement
         }
         catch
         {
