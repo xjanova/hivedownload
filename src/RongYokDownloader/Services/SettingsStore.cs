@@ -68,4 +68,31 @@ public sealed class SettingsStore
         get => _db.GetSetting("stream_mode") is "1";
         set => _db.SetSetting("stream_mode", value ? "1" : "0");
     }
+
+    // ── NetWix Sync (mirror rongyok episodes into the netwix.online streaming site) ──
+
+    public string NetWixUrl
+    {
+        get { var v = _db.GetSetting("netwix_url"); return string.IsNullOrWhiteSpace(v) ? "https://netwix.online" : v; }
+        set => _db.SetSetting("netwix_url", (value ?? "").Trim());
+    }
+
+    public string NetWixToken
+    {
+        get => _db.GetSetting("netwix_token") ?? "";
+        set => _db.SetSetting("netwix_token", (value ?? "").Trim());
+    }
+
+    public int NetWixInterval
+    {
+        get => int.TryParse(_db.GetSetting("netwix_interval"), out var n) && n >= 15 ? n : 60;
+        set => _db.SetSetting("netwix_interval", Math.Max(15, value).ToString());
+    }
+
+    /// <summary>Start NetWix sync automatically when the app opens.</summary>
+    public bool NetWixAutoStart
+    {
+        get => _db.GetSetting("netwix_autostart") is "1";
+        set => _db.SetSetting("netwix_autostart", value ? "1" : "0");
+    }
 }

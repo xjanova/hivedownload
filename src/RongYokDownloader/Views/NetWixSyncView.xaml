@@ -1,0 +1,132 @@
+<UserControl
+    x:Class="RongYokDownloader.Views.NetWixSyncView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    FontFamily="{StaticResource AppFont}">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="28,24,28,24" MaxWidth="880" HorizontalAlignment="Left">
+
+            <TextBlock Text="NetWix Sync" Style="{StaticResource H1}" Margin="0,0,0,4" />
+            <TextBlock Text="ส่งหนังที่ NetWix สั่ง ให้ขึ้นเก็บบนเซิร์ฟเวอร์ netwix.online (เครื่องนี้เป็นฝ่ายติดต่อไปหา NetWix เอง)"
+                       Style="{StaticResource Muted}" Margin="0,0,0,18" />
+
+            <!-- connection status -->
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Ellipse Grid.Column="0" Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,14,0">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="#FF6B81" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                        <Setter Property="Fill" Value="#46D369" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ConnectionLabel}" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Muted}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="▶ เริ่มซิงค์" Command="{Binding StartCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="■ หยุด" Command="{Binding StopCommand}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- what NetWix is asking for -->
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="งานที่ NetWix สั่ง" Style="{StaticResource H2}" />
+                    <Grid Margin="0,12,0,0">
+                        <Border HorizontalAlignment="Left" CornerRadius="10" Background="{StaticResource BgElevated}" Padding="18,10">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding QueueCount}" FontSize="26" FontWeight="Bold" Foreground="{StaticResource AccentHover}" VerticalAlignment="Center" />
+                                <TextBlock Text="ตอนที่ต้องโหลด" Style="{StaticResource Muted}" VerticalAlignment="Bottom" Margin="8,0,0,4" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TextPrimary}" Margin="0,12,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- settings -->
+            <Border Style="{StaticResource Card}" Padding="20" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="การเชื่อมต่อ" Style="{StaticResource H2}" Margin="0,0,0,12" />
+
+                    <TextBlock Text="NetWix URL" Style="{StaticResource Muted}" />
+                    <TextBox Text="{Binding NetWixUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,10" />
+
+                    <TextBlock Text="Ingest Token (จากเซิร์ฟเวอร์: /home/admin/.netwix_ingest_token)" Style="{StaticResource Muted}" />
+                    <TextBox Text="{Binding Token, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,10" />
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="ตรวจทุก (วินาที)" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBox Grid.Column="1" Text="{Binding IntervalSeconds, UpdateSourceTrigger=PropertyChanged}" VerticalAlignment="Center" />
+                        <CheckBox Grid.Column="2" Style="{StaticResource ToggleSwitch}" Content="เริ่มซิงค์อัตโนมัติเมื่อเปิดโปรแกรม"
+                                  IsChecked="{Binding AutoStart}" VerticalAlignment="Center" Margin="20,0,0,0" />
+                        <Button Grid.Column="3" Content="บันทึก" Style="{StaticResource PrimaryButton}" Command="{Binding SaveCommand}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- activity log -->
+            <Border Style="{StaticResource Card}" Padding="20">
+                <StackPanel>
+                    <TextBlock Text="บันทึกการทำงาน" Style="{StaticResource H2}" Margin="0,0,0,10" />
+                    <Border CornerRadius="8" Background="{StaticResource BgBase}" Padding="6" Height="240">
+                        <ListBox ItemsSource="{Binding Log}" Background="Transparent" BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12"
+                                               Foreground="{StaticResource TextPrimary}" TextWrapping="Wrap" Margin="4,1" />
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

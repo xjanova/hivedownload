@@ -69,6 +69,18 @@
                             <TextBlock Text="ตั้งค่า" VerticalAlignment="Center" />
                         </StackPanel>
                     </ListBoxItem>
+                    <ListBoxItem>
+                        <Grid>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE753;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Width="26" />
+                                <TextBlock Text="NetWix Sync" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Ellipse HorizontalAlignment="Right" VerticalAlignment="Center" Width="9" Height="9"
+                                     Visibility="{Binding NetWixConnected, Converter={StaticResource BoolToVis}}">
+                                <Ellipse.Fill><SolidColorBrush Color="#46D369" /></Ellipse.Fill>
+                            </Ellipse>
+                        </Grid>
+                    </ListBoxItem>
                 </ListBox>
             </DockPanel>
         </Border>

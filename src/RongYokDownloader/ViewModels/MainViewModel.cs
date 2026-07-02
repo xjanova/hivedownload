@@ -24,12 +24,14 @@ public sealed partial class MainViewModel : ObservableObject
     public DownloadsViewModel DownloadsPage { get; }
     public LibraryViewModel Library { get; }
     public SettingsViewModel Settings { get; }
+    public NetWixSyncViewModel NetWixSync { get; }
 
     [ObservableProperty] private object? _currentPage;
     [ObservableProperty] private int _selectedNavIndex;
     [ObservableProperty] private int _activeDownloads;
     [ObservableProperty] private bool _isScanning;
     [ObservableProperty] private string _scanStatus = "";
+    [ObservableProperty] private bool _netWixConnected;
 
     /// <summary>Raised when a scan finds new content — the shell opens the What's New dialog.</summary>
     public event Action<WhatsNewViewModel>? ShowWhatsNewRequested;
@@ -56,6 +58,13 @@ public sealed partial class MainViewModel : ObservableObject
 
         Settings = new SettingsViewModel(_settings, _db);
 
+        NetWixSync = new NetWixSyncViewModel(_settings);
+        NetWixSync.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(NetWixSyncViewModel.IsConnected))
+                NetWixConnected = NetWixSync.IsConnected;
+        };
+
         ShowCatalog();
     }
 
@@ -68,6 +77,7 @@ public sealed partial class MainViewModel : ObservableObject
             case 1: ShowDownloads(); break;
             case 2: ShowLibrary(); break;
             case 3: ShowSettings(); break;
+            case 4: ShowNetWixSync(); break;
         }
     }
 
@@ -106,6 +116,13 @@ public sealed partial class MainViewModel : ObservableObject
     {
         SetNav(3);
         CurrentPage = Settings;
+    }
+
+    [RelayCommand]
+    private void ShowNetWixSync()
+    {
+        SetNav(4);
+        CurrentPage = NetWixSync;
     }
 
     /// <summary>

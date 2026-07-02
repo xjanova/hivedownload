@@ -3,45 +3,55 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NetwixSync — mirror rongyok episodes that NetWix has imported into NetWix's
-// own storage, so they play without depending on rongyok's expiring URLs.
+// NetwixSync — keeps NetWix's rongyok library mirrored to NetWix's own storage,
+// so episodes play without depending on rongyok's residential-only expiring URLs.
 //
-//   dotnet run --project src/NetwixSync -- --token <NETWIX_INGEST_TOKEN>
+//   One pass:      dotnet run --project src/NetwixSync -- --token <TOKEN>
+//   Run forever:   dotnet run --project src/NetwixSync -- --loop 60 --token <TOKEN>
 //
 // Options:
-//   --token   <t>   NetWix ingest token (or env NETWIX_INGEST_TOKEN)   [required]
+//   --token   <t>   NetWix ingest token (or env NETWIX_INGEST_TOKEN, or token.txt)
+//   --loop    [sec] run continuously, polling every [sec] seconds (default 60)
 //   --netwix  <url> NetWix base URL            (default https://netwix.online)
 //   --source  <s>   source to mirror           (default rongyok)
-//   --limit   <n>   max episodes this run      (default 300)
+//   --limit   <n>   max episodes per pass      (default 300)
 //   --retries <n>   download attempts per ep   (default 3)
 //
-// The NetWix ingest token lives on the server at /home/admin/.netwix_ingest_token
+// In loop mode, customer-requested episodes (★) are mirrored first, so a viewer
+// who clicks an un-mirrored episode gets it within one poll cycle.
+// The ingest token is on the server at /home/admin/.netwix_ingest_token
 // ─────────────────────────────────────────────────────────────────────────────
 
 string? Arg(string name)
 {
-    var a = args;
-    for (int i = 0; i < a.Length - 1; i++)
-        if (a[i] == name) return a[i + 1];
+    for (int i = 0; i < args.Length - 1; i++)
+        if (args[i] == name) return args[i + 1];
     return null;
 }
 
+string TokenFromFile()
+{
+    var p = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NetwixSync", "token.txt");
+    return File.Exists(p) ? File.ReadAllText(p).Trim() : "";
+}
+
 string baseUrl = (Arg("--netwix") ?? Environment.GetEnvironmentVariable("NETWIX_URL") ?? "https://netwix.online").TrimEnd('/');
-string token = Arg("--token") ?? Environment.GetEnvironmentVariable("NETWIX_INGEST_TOKEN") ?? "";
+string token = Arg("--token") ?? Environment.GetEnvironmentVariable("NETWIX_INGEST_TOKEN") ?? TokenFromFile();
 string source = Arg("--source") ?? "rongyok";
 int limit = int.TryParse(Arg("--limit"), out var l) ? l : 300;
 int retries = int.TryParse(Arg("--retries"), out var r) ? r : 3;
+int loop = args.Contains("--loop") ? (int.TryParse(Arg("--loop"), out var iv) && iv > 0 ? iv : 60) : 0;
 
 if (string.IsNullOrWhiteSpace(token))
 {
-    Console.Error.WriteLine("ERROR: missing NetWix ingest token. Pass --token <t> or set NETWIX_INGEST_TOKEN.");
+    Console.Error.WriteLine("ERROR: missing NetWix ingest token. Pass --token <t>, set NETWIX_INGEST_TOKEN, or run install-startup.ps1.");
     return 1;
 }
 
 const string UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
-// rongyok client — keeps a cookie jar and looks like a browser (residential IP required).
+// rongyok client — cookie jar + browser UA (must run from a residential connection).
 using var rongHandler = new HttpClientHandler
 {
     AutomaticDecompression = DecompressionMethods.All,
@@ -52,68 +62,77 @@ using var rong = new HttpClient(rongHandler) { Timeout = TimeSpan.FromSeconds(12
 rong.DefaultRequestHeaders.UserAgent.ParseAdd(UA);
 rong.DefaultRequestHeaders.AcceptLanguage.ParseAdd("th,en;q=0.8");
 
-// NetWix client
 using var netwix = new HttpClient { BaseAddress = new Uri(baseUrl), Timeout = TimeSpan.FromMinutes(15) };
 netwix.DefaultRequestHeaders.Add("X-Ingest-Token", token);
 netwix.DefaultRequestHeaders.Accept.ParseAdd("application/json");
 
-Console.WriteLine($"NetwixSync → {baseUrl}  (source={source}, limit={limit})");
+Console.WriteLine($"NetwixSync → {baseUrl}  (source={source}, limit={limit}{(loop > 0 ? $", loop {loop}s" : "")})");
 
-// 1) Ask NetWix what still needs mirroring.
-List<PendingItem> pending;
-try
+if (loop > 0)
 {
-    var body = await netwix.GetStringAsync($"/api/ingest/pending?source={source}&limit={limit}");
-    pending = JsonSerializer.Deserialize<PendingResponse>(body, jsonOpts)?.Items ?? new();
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"ERROR: could not reach NetWix ingest API: {ex.Message}");
-    return 1;
+    Console.WriteLine("Loop mode: polling continuously. Press Ctrl+C to stop.\n");
+    while (true)
+    {
+        try { await RunOnce(); }
+        catch (Exception ex) { Console.WriteLine($"[{Stamp()}] cycle error: {ex.Message}"); }
+        await Task.Delay(TimeSpan.FromSeconds(loop));
+    }
 }
 
-Console.WriteLine($"NetWix wants {pending.Count} episode(s) mirrored.\n");
-if (pending.Count == 0) return 0;
+return await RunOnce() ? 0 : 1;
 
-int ok = 0, fail = 0, i = 0;
-foreach (var item in pending)
+// ── one polling cycle: fetch the worklist and mirror everything on it ──
+async Task<bool> RunOnce()
 {
-    i++;
-    string flag = item.Requested ? $"★[ลูกค้าขอ {item.Requests}×] " : "";
-    string tag = $"[{i}/{pending.Count}] {flag}{Trim(item.Title, 32)} ตอนที่ {item.Number}";
+    List<PendingItem> pending;
     try
     {
-        string? url = await ResolveVideoUrl(item.SourceKey, item.Number);
-        if (url is null)
-        {
-            Console.WriteLine($"  ✗ {tag} — resolve failed (source returned no URL)");
-            fail++;
-            continue;
-        }
-
-        string tmp = Path.Combine(Path.GetTempPath(), $"netwixsync_{item.SourceKey}_{item.Number}.mp4");
-        long bytes = await DownloadWithRetry(url, tmp, retries);
-        await Upload(item.SourceKey, item.Number, tmp);
-        TryDelete(tmp);
-
-        Console.WriteLine($"  ✓ {tag} — {bytes / 1024 / 1024.0:0.0} MB");
-        ok++;
+        var body = await netwix.GetStringAsync($"/api/ingest/pending?source={source}&limit={limit}");
+        pending = JsonSerializer.Deserialize<PendingResponse>(body, jsonOpts)?.Items ?? new();
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"  ✗ {tag} — {ex.Message}");
-        fail++;
+        Console.Error.WriteLine($"[{Stamp()}] cannot reach NetWix ingest API: {ex.Message}");
+        return false;
     }
-}
 
-Console.WriteLine($"\nDone. mirrored {ok}, failed {fail}.");
-return 0;
+    if (pending.Count == 0)
+    {
+        Console.WriteLine($"[{Stamp()}] up to date — nothing to mirror.");
+        return true;
+    }
+
+    Console.WriteLine($"[{Stamp()}] mirroring {pending.Count} episode(s)…");
+    int ok = 0, fail = 0, i = 0;
+    foreach (var item in pending)
+    {
+        i++;
+        string flag = item.Requested ? $"★[ลูกค้าขอ {item.Requests}×] " : "";
+        string tag = $"[{i}/{pending.Count}] {flag}{Trim(item.Title, 30)} ตอนที่ {item.Number}";
+        try
+        {
+            string? url = await ResolveVideoUrl(item.SourceKey, item.Number);
+            if (url is null) { Console.WriteLine($"  ✗ {tag} — resolve failed"); fail++; continue; }
+
+            string tmp = Path.Combine(Path.GetTempPath(), $"netwixsync_{item.SourceKey}_{item.Number}.mp4");
+            long bytes = await DownloadWithRetry(url, tmp, retries);
+            await Upload(item.SourceKey, item.Number, tmp);
+            TryDelete(tmp);
+
+            Console.WriteLine($"  ✓ {tag} — {bytes / 1024 / 1024.0:0.0} MB");
+            ok++;
+        }
+        catch (Exception ex) { Console.WriteLine($"  ✗ {tag} — {Trim(ex.Message, 80)}"); fail++; }
+    }
+    Console.WriteLine($"[{Stamp()}] done: mirrored {ok}, failed {fail}.");
+    return true;
+}
 
 // ── rongyok resolve: visit the watch page first (session cookie), then get_video.php ──
 async Task<string?> ResolveVideoUrl(string seriesId, int ep)
 {
     string watch = $"https://rongyok.com/watch/?series_id={seriesId}&ep={ep}";
-    try { await rong.GetAsync(watch); } catch { /* establishing session is best-effort */ }
+    try { await rong.GetAsync(watch); } catch { /* best-effort session */ }
 
     using var req = new HttpRequestMessage(HttpMethod.Get, $"https://rongyok.com/watch/get_video.php?series_id={seriesId}&ep={ep}");
     req.Headers.Referrer = new Uri(watch);
@@ -174,6 +193,7 @@ async Task Upload(string seriesId, int ep, string path)
 
 static void TryDelete(string p) { try { File.Delete(p); } catch { } }
 static string Trim(string? s, int n) { s ??= ""; return s.Length <= n ? s : s[..n] + "…"; }
+static string Stamp() => DateTime.Now.ToString("HH:mm:ss");
 
 // ── DTOs ──
 record PendingResponse(int Count, List<PendingItem> Items);
