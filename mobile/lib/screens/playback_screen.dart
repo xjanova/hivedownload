@@ -49,6 +49,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   final Set<int> _loading = {};
   final Set<int> _failed = {};
   final Set<int> _retried = {}; // one fresh-URL retry per episode
+  final Map<int, String> _errMsg = {}; // shown on the failed page for diagnosis
 
   RongYokClient? _client;
   CatalogDb? _db;
@@ -143,6 +144,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
       if (!mounted) return;
       if (url == null) {
         _loading.remove(index);
+        _errMsg[index] = 'get_video ไม่คืนลิงก์ (series ${s.id} ep $ep)';
         _failed.add(index);
         if (mounted) setState(() {});
         return;
@@ -179,6 +181,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
           return;
         }
       }
+      _errMsg[index] = e.toString();
       _failed.add(index);
       if (mounted) setState(() {});
     }
@@ -325,6 +328,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
             itemBuilder: (_, index) => _EpisodePage(
               controller: _controllers[index],
               failed: _failed.contains(index),
+              errorText: _errMsg[index],
               locked: _locked(index),
               episode: eps[index],
               unlockCost: _member?.unlockCost ?? 5,
@@ -476,6 +480,7 @@ class _EpisodePage extends StatelessWidget {
   const _EpisodePage({
     required this.controller,
     required this.failed,
+    required this.errorText,
     required this.locked,
     required this.episode,
     required this.unlockCost,
@@ -487,6 +492,7 @@ class _EpisodePage extends StatelessWidget {
 
   final VideoPlayerController? controller;
   final bool failed;
+  final String? errorText;
   final bool locked;
   final int episode;
   final int unlockCost;
@@ -555,17 +561,28 @@ class _EpisodePage extends StatelessWidget {
               )
             else if (failed)
               Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(l.pick('เล่นวิดีโอไม่สำเร็จ', 'Playback failed'),
-                        style: AppTheme.body(13, color: Colors.white70)),
-                    TextButton(
-                      onPressed: onRetry,
-                      child: Text(l.pick('ลองใหม่', 'Retry'),
-                          style: AppTheme.body(13, color: T.accent)),
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(l.pick('เล่นวิดีโอไม่สำเร็จ', 'Playback failed'),
+                          style: AppTheme.body(14, weight: FontWeight.w600, color: Colors.white)),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 8),
+                        Text(errorText!,
+                            textAlign: TextAlign.center,
+                            maxLines: 5,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.body(11, color: Colors.white54)),
+                      ],
+                      TextButton(
+                        onPressed: onRetry,
+                        child: Text(l.pick('ลองใหม่', 'Retry'),
+                            style: AppTheme.body(13, color: T.accent)),
+                      ),
+                    ],
+                  ),
                 ),
               )
             else
