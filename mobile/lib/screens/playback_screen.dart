@@ -149,10 +149,9 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
         if (mounted) setState(() {});
         return;
       }
-      final c = VideoPlayerController.networkUrl(
-        Uri.parse(url),
-        httpHeaders: RongYokClient.mediaHeaders,
-      );
+      // No custom httpHeaders: the CDN serves the MP4 to any User-Agent, and
+      // passing a UA to ExoPlayer was causing "Source error" on release builds.
+      final c = VideoPlayerController.networkUrl(Uri.parse(url));
       await c.initialize();
       if (!mounted) {
         await c.dispose();

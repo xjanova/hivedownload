@@ -131,10 +131,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
       }
       if (url == null || !mounted) return;
 
-      final c = VideoPlayerController.networkUrl(
-        Uri.parse(url),
-        httpHeaders: RongYokClient.mediaHeaders,
-      );
+      final c = VideoPlayerController.networkUrl(Uri.parse(url));
       await c.initialize();
       if (!mounted) {
         await c.dispose();
