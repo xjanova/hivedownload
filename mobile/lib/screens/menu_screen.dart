@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
-import '../services/auth_service.dart';
 import '../services/settings_store.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
@@ -10,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import '../widgets/login_sheet.dart';
 import 'earn_coins_screen.dart';
 import 'go_pro_screen.dart';
 import 'whats_new_screen.dart';
@@ -70,11 +70,19 @@ class MenuScreen extends StatelessWidget {
               ),
             ]),
             const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: _loginBtn(context, 'Google', Icons.g_mobiledata_rounded, AuthProvider.google)),
-              const SizedBox(width: 10),
-              Expanded(child: _loginBtn(context, 'LINE', Icons.chat_bubble_rounded, AuthProvider.line)),
-            ]),
+            GestureDetector(
+              onTap: () => showLoginSheet(context),
+              child: Container(
+                height: 46,
+                decoration: BoxDecoration(gradient: T.accentGradient, borderRadius: BorderRadius.circular(T.rButton)),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const Icon(Icons.login_rounded, size: 18, color: T.onAccent),
+                  const SizedBox(width: 8),
+                  Text(l.pick('เข้าสู่ระบบ', 'Sign in'),
+                      style: AppTheme.body(14, weight: FontWeight.w700, color: T.onAccent)),
+                ]),
+              ),
+            ),
           ],
         ),
       );
@@ -102,21 +110,6 @@ class MenuScreen extends StatelessWidget {
             icon: const Icon(Icons.logout_rounded, size: 18, color: T.textFaint),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _loginBtn(BuildContext context, String label, IconData icon, AuthProvider p) {
-    return GestureDetector(
-      onTap: () => context.read<MemberState>().login(p),
-      child: Container(
-        height: 44,
-        decoration: BoxDecoration(gradient: T.accentGradient, borderRadius: BorderRadius.circular(T.rButton)),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, size: 20, color: T.onAccent),
-          const SizedBox(width: 6),
-          Text(label, style: AppTheme.body(13, weight: FontWeight.w700, color: T.onAccent)),
-        ]),
       ),
     );
   }

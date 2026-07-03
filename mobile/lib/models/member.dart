@@ -7,23 +7,29 @@ class Member {
     required this.id,
     required this.name,
     this.avatar,
+    this.email,
     this.provider = 'guest',
     this.referralCode = '',
     this.token,
+    this.isPro = false,
   });
 
   final String id;
   final String name;
   final String? avatar;
+  final String? email;
 
-  /// 'google' | 'line' | 'guest'
+  /// 'google' | 'line' | 'email' | 'guest'
   final String provider;
 
   /// The member's own code to invite friends.
   final String referralCode;
 
-  /// netwix.online Sanctum bearer token (null while offline/guest).
+  /// NetWix app bearer token (null while guest).
   final String? token;
+
+  /// Server plan is a paid tier (ad-free).
+  final bool isPro;
 
   bool get isGuest => provider == 'guest';
   bool get isLoggedIn => provider != 'guest';
@@ -32,18 +38,34 @@ class Member {
         'id': id,
         'name': name,
         'avatar': avatar,
+        'email': email,
         'provider': provider,
         'referral_code': referralCode,
         'token': token,
+        'is_pro': isPro,
       };
 
   factory Member.fromJson(Map<String, dynamic> j) => Member(
         id: '${j['id'] ?? ''}',
         name: (j['name'] as String?) ?? 'สมาชิก',
         avatar: j['avatar'] as String?,
+        email: j['email'] as String?,
         provider: (j['provider'] as String?) ?? 'guest',
         referralCode: (j['referral_code'] ?? j['referralCode'] ?? '') as String,
         token: j['token'] as String?,
+        isPro: j['is_pro'] == true,
+      );
+
+  /// Build from the `/api/app/auth/me` (or exchange) user payload + token.
+  factory Member.fromNetwixUser(Map<String, dynamic> u, {String? token}) => Member(
+        id: '${u['id'] ?? ''}',
+        name: (u['name'] as String?) ?? 'สมาชิก',
+        avatar: u['avatar'] as String?,
+        email: u['email'] as String?,
+        // server sends null provider for email/password accounts
+        provider: (u['provider'] as String?) ?? 'email',
+        token: token,
+        isPro: u['is_pro'] == true,
       );
 
   String encode() => jsonEncode(toJson());
@@ -56,13 +78,16 @@ class Member {
     }
   }
 
-  Member copyWith({String? name, String? avatar, String? referralCode, String? token}) => Member(
+  Member copyWith({String? name, String? avatar, String? referralCode, String? token, bool? isPro}) =>
+      Member(
         id: id,
         name: name ?? this.name,
         avatar: avatar ?? this.avatar,
+        email: email,
         provider: provider,
         referralCode: referralCode ?? this.referralCode,
         token: token ?? this.token,
+        isPro: isPro ?? this.isPro,
       );
 }
 

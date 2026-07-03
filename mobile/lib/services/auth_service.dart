@@ -1,90 +1,70 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_line_sdk/flutter_line_sdk.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../models/member.dart';
-import 'netwix_client.dart';
+import 'netwix_api.dart';
 
-enum AuthProvider { google, line }
+enum AuthProvider { google, line, email }
 
-class AuthResult {
-  const AuthResult(this.member, {this.fromBackend = false});
-  final Member member;
-  final bool fromBackend;
+extension AuthProviderX on AuthProvider {
+  String? get query => switch (this) {
+        AuthProvider.google => 'google',
+        AuthProvider.line => 'line',
+        AuthProvider.email => null,
+      };
+  String get label => switch (this) {
+        AuthProvider.google => 'Google',
+        AuthProvider.line => 'LINE',
+        AuthProvider.email => 'อีเมล',
+      };
 }
 
-/// Google + LINE sign-in, exchanged with netwix.online for a session.
-///
-/// The real provider flows are wired. Until the OAuth apps + netwix backend are
-/// configured they throw, and we fall back to a **local account of that
-/// provider** so the sign-in → coins → unlock loop is fully testable today.
-/// Fill [googleServerClientId] / [lineChannelId] (or configure natively) to go
-/// live.
+class AuthResult {
+  const AuthResult(this.member);
+  final Member member;
+}
+
+/// Thrown when the user dismisses the in-app browser without finishing.
+class AuthCancelled implements Exception {}
+
+/// Sign-in that reuses the NetWix **web** login (Google / LINE / email). Opens
+/// `/mauth/start` in an in-app browser tab, lets the user authenticate on the
+/// site, then captures the `netwix://auth?code=…` deep link and exchanges the
+/// one-time code for a bearer token. No native OAuth client / SDK needed.
 class AuthService {
-  AuthService(this._netwix);
-  final NetwixClient _netwix;
-  bool _googleReady = false;
+  AuthService(this._api);
+  final NetwixApi _api;
 
-  static const String googleServerClientId = ''; // web OAuth client id
-  static const String lineChannelId = ''; // LINE Login channel id
+  static const String _callbackScheme = 'netwix';
 
-  Future<AuthResult> signIn(AuthProvider provider, {String? ref}) async {
-    switch (provider) {
-      case AuthProvider.google:
-        return _google(ref);
-      case AuthProvider.line:
-        return _line(ref);
-    }
-  }
+  Future<AuthResult> signIn(AuthProvider provider) async {
+    final q = provider.query;
+    final url = '${NetwixApi.origin}/mauth/start${q != null ? '?provider=$q' : ''}';
 
-  Future<AuthResult> _google(String? ref) async {
+    final String callback;
     try {
-      final g = GoogleSignIn.instance;
-      if (!_googleReady) {
-        await g.initialize(
-            serverClientId: googleServerClientId.isEmpty ? null : googleServerClientId);
-        _googleReady = true;
-      }
-      final account = await g.authenticate(scopeHint: const ['email']);
-      final idToken = account.authentication.idToken;
-      if (idToken != null) {
-        final m = await _netwix.authWithGoogle(idToken, ref: ref);
-        if (m != null) return AuthResult(m, fromBackend: true);
-      }
-      return AuthResult(_local('google', account.displayName ?? account.email, account.photoUrl));
-    } catch (e) {
-      if (kDebugMode) debugPrint('google sign-in fell back to local: $e');
-      return AuthResult(_local('google', 'ผู้ใช้ Google', null));
-    }
-  }
-
-  Future<AuthResult> _line(String? ref) async {
-    try {
-      if (lineChannelId.isNotEmpty) {
-        LineSDK.instance.setup(lineChannelId);
-      }
-      final result = await LineSDK.instance.login(scopes: const ['profile', 'openid']);
-      final token = result.accessToken.value;
-      final m = await _netwix.authWithLine(token, ref: ref);
-      if (m != null) return AuthResult(m, fromBackend: true);
-      final p = result.userProfile;
-      return AuthResult(_local('line', p?.displayName ?? 'ผู้ใช้ LINE', p?.pictureUrl));
-    } catch (e) {
-      if (kDebugMode) debugPrint('line sign-in fell back to local: $e');
-      return AuthResult(_local('line', 'ผู้ใช้ LINE', null));
-    }
-  }
-
-  Member _local(String provider, String name, String? avatar) => Member(
-        id: 'local-$provider',
-        name: name,
-        avatar: avatar,
-        provider: provider,
-        referralCode: _refCode(),
+      callback = await FlutterWebAuth2.authenticate(
+        url: url,
+        callbackUrlScheme: _callbackScheme,
       );
+    } catch (e) {
+      // The plugin throws on user-cancel (tab closed); surface it cleanly.
+      if (kDebugMode) debugPrint('web auth cancelled/failed: $e');
+      throw AuthCancelled();
+    }
 
-  String _refCode() {
-    final n = DateTime.now().microsecondsSinceEpoch % 1000000;
-    return 'HD${n.toString().padLeft(6, '0')}';
+    final code = Uri.tryParse(callback)?.queryParameters['code'];
+    if (code == null || code.isEmpty) {
+      throw Exception('ไม่ได้รับรหัสยืนยันจากการเข้าสู่ระบบ');
+    }
+
+    final data = await _api.exchangeCode(code);
+    final token = data?['token'] as String?;
+    final user = data?['user'];
+    if (token == null || user is! Map) {
+      throw Exception('แลกรหัสเข้าสู่ระบบไม่สำเร็จ');
+    }
+
+    return AuthResult(Member.fromNetwixUser(user.cast<String, dynamic>(), token: token));
   }
 }

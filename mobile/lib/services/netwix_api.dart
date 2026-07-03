@@ -123,6 +123,42 @@ class NetwixApi {
     }
   }
 
+  // ------------------------------------------------------------- member auth
+
+  /// Exchange the one-time login code (from the netwix:// deep link) for a
+  /// bearer token. Returns `{token, user}` or null.
+  Future<Map<String, dynamic>?> exchangeCode(String code, {String device = 'android'}) async {
+    try {
+      final r = await _dio.post('/auth/exchange',
+          data: {'code': code, 'device': device},
+          options: Options(validateStatus: (s) => s != null && s < 500));
+      return _data(r);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix exchangeCode: $e');
+      return null;
+    }
+  }
+
+  /// Current member + default profile (requires a token via [setToken]).
+  Future<Map<String, dynamic>?> fetchMe() async {
+    try {
+      return _data(await _dio.get('/auth/me', options: _opts));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix fetchMe: $e');
+      return null;
+    }
+  }
+
+  /// Revoke the current token server-side. Best-effort.
+  Future<void> logoutToken() async {
+    try {
+      await _dio.post('/auth/logout',
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix logoutToken: $e');
+    }
+  }
+
   List<Content> _contentList(dynamic v) {
     if (v is! List) return const [];
     return v.whereType<Map>().map((m) => Content.fromJson(m.cast<String, dynamic>())).toList();

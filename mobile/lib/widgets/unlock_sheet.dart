@@ -3,13 +3,13 @@ import 'package:provider/provider.dart';
 
 import '../screens/earn_coins_screen.dart';
 import '../screens/go_pro_screen.dart';
-import '../services/auth_service.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import 'common.dart';
+import 'login_sheet.dart';
 
 /// Shown when a locked episode is tapped. Returns true if it got unlocked.
 Future<bool> showUnlockSheet(
@@ -85,15 +85,24 @@ class _UnlockSheetState extends State<_UnlockSheet> {
           const SizedBox(height: 18),
 
           if (!member.isLoggedIn) ...[
-            Text(l.pick('เข้าสู่ระบบรับ 10 เหรียญฟรีทันที', 'Sign in for 10 free coins'),
-                style: AppTheme.body(13.5, color: T.textSecondary)),
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(child: _loginBtn(context, l, AuthProvider.google, 'Google', Icons.g_mobiledata_rounded)),
-              const SizedBox(width: 10),
-              Expanded(child: _loginBtn(context, l, AuthProvider.line, 'LINE', Icons.chat_bubble_rounded)),
-            ]),
-            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: _busy ? null : () => showLoginSheet(context),
+              child: Container(
+                height: 48,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0x14FFFFFF),
+                  borderRadius: BorderRadius.circular(T.rButton),
+                  border: Border.all(color: T.hairlineStrong),
+                ),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  const Icon(Icons.login_rounded, size: 18, color: T.accent),
+                  const SizedBox(width: 8),
+                  Text(l.pick('เข้าสู่ระบบรับ 10 เหรียญฟรี', 'Sign in for 10 free coins'),
+                      style: AppTheme.body(13.5, weight: FontWeight.w600, color: T.textPrimary)),
+                ]),
+              ),
+            ),
           ],
 
           AccentButton(
@@ -131,31 +140,6 @@ class _UnlockSheetState extends State<_UnlockSheet> {
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _loginBtn(BuildContext context, l, AuthProvider p, String label, IconData icon) {
-    return GestureDetector(
-      onTap: _busy
-          ? null
-          : () async {
-              setState(() => _busy = true);
-              await context.read<MemberState>().login(p);
-              if (mounted) setState(() => _busy = false);
-            },
-      child: Container(
-        height: 46,
-        decoration: BoxDecoration(
-          color: const Color(0x14FFFFFF),
-          borderRadius: BorderRadius.circular(T.rButton),
-          border: Border.all(color: T.hairline),
-        ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, size: 20, color: T.textPrimary),
-          const SizedBox(width: 6),
-          Text(label, style: AppTheme.body(13, weight: FontWeight.w600, color: T.textPrimary)),
-        ]),
       ),
     );
   }

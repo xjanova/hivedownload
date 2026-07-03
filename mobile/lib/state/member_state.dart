@@ -5,17 +5,18 @@ import 'package:flutter/foundation.dart';
 import '../models/member.dart';
 import '../services/account_store.dart';
 import '../services/auth_service.dart';
+import '../services/netwix_api.dart';
 import '../services/netwix_client.dart';
 import '../services/reward_config.dart';
 
-/// The app-facing account/coins/gating state. Local-first (AccountStore) and
-/// backend-ready (NetwixClient). All coin mutations are optimistic locally and
-/// mirrored to netwix.online when it's live (server is authoritative later).
+/// The app-facing account/coins state. Auth + identity come from NetWix
+/// (bearer token on [NetwixApi]); coins/activities stay local-first for now.
 class MemberState extends ChangeNotifier {
-  MemberState(this._store, this._netwix, this._auth);
+  MemberState(this._store, this._netwix, this._api, this._auth);
 
   final AccountStore _store;
   final NetwixClient _netwix;
+  final NetwixApi _api;
   final AuthService _auth;
 
   Member? _member;
@@ -23,23 +24,38 @@ class MemberState extends ChangeNotifier {
 
   Member? get member => _member;
   bool get isLoggedIn => _member?.isLoggedIn ?? false;
+  bool get isPro => _member?.isPro ?? false;
   int get coins => _coins;
   String get referralCode => _member?.referralCode ?? '';
 
   void init() {
     _member = _store.member;
     _coins = _store.coins;
-    if (_member?.token != null) _netwix.setToken(_member!.token);
+    final token = _member?.token;
+    _netwix.setToken(token);
+    _api.setToken(token);
+    notifyListeners();
+    if (token != null) unawaited(_refreshMe());
+  }
+
+  /// Re-pull the profile from the server (name/avatar/plan may have changed).
+  Future<void> _refreshMe() async {
+    final me = await _api.fetchMe();
+    if (me == null) return; // transient/401 — keep the cached member
+    _member = Member.fromNetwixUser(me, token: _member?.token);
+    await _store.setMember(_member);
     notifyListeners();
   }
 
   // -------------------------------------------------------------- auth
 
+  /// Runs the web sign-in bridge. Throws [AuthCancelled] if the user backs out.
   Future<AuthResult> login(AuthProvider provider) async {
     final res = await _auth.signIn(provider);
     _member = res.member;
     await _store.setMember(res.member);
-    if (res.member.token != null) _netwix.setToken(res.member.token);
+    _netwix.setToken(res.member.token);
+    _api.setToken(res.member.token);
 
     // ล็อกอินครั้งแรกด้วยบัญชี → +10 เหรียญ (ครั้งเดียวตลอดกาล)
     if (!_store.firstLoginBonusDone) {
@@ -51,8 +67,10 @@ class MemberState extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await _api.logoutToken(); // best-effort server revoke
     _member = null;
     _netwix.setToken(null);
+    _api.setToken(null);
     await _store.setMember(null);
     notifyListeners();
   }

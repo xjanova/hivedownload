@@ -27,6 +27,19 @@
             </intent-filter>
         </activity>
 
+        <!-- flutter_web_auth_2: captures the netwix:// callback from the web
+             sign-in flow (/mauth/start → deep link netwix://auth?code=…). -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="netwix" />
+            </intent-filter>
+        </activity>
+
         <!-- ota_update: FileProvider + install-result receiver (Android 7+).
              Without these the self-update install intent fails silently. -->
         <provider

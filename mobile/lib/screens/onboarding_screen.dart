@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../theme/hex.dart' show Floating;
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import '../widgets/login_sheet.dart';
 import 'app_shell.dart';
 
 /// 01 — Onboarding · เริ่มต้นใช้งาน. First-run pitch + entry.
@@ -79,9 +80,7 @@ class OnboardingScreen extends StatelessWidget {
                 const SizedBox(height: 12),
                 GhostButton(
                   label: l.bi('เข้าสู่ระบบ', 'Sign in'),
-                  onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(l.pick('การเข้าสู่ระบบจะมาในเวอร์ชันถัดไป', 'Sign-in coming soon'))),
-                  ),
+                  onPressed: () => showLoginSheet(context),
                 ),
               ],
             ),

@@ -42,7 +42,7 @@ Future<void> main() async {
   final db = await CatalogDb.open();
   final accountStore = await AccountStore.load();
   final netwix = NetwixClient();
-  final memberState = MemberState(accountStore, netwix, AuthService(netwix))..init();
+  final memberState = MemberState(accountStore, netwix, api, AuthService(api))..init();
 
   runApp(HiveApp(
       settings: settings, api: api, db: db, netwix: netwix, memberState: memberState));
