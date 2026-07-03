@@ -62,6 +62,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
 
   DateTime _lastResumeSave = DateTime.fromMillisecondsSinceEpoch(0);
   bool _advancing = false;
+  bool _fullscreen = false; // landscape + fit-to-frame (for horizontal titles)
 
   Content get c => widget.content;
   List<Episode> get eps => widget.episodes;
@@ -263,6 +264,15 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     setState(() => ctrl.value.isPlaying ? ctrl.pause() : ctrl.play());
   }
 
+  /// Fullscreen = rotate to landscape + show the whole frame (contain) instead
+  /// of the vertical cover-crop. Tap again to return to the portrait feed.
+  void _toggleFullscreen() {
+    setState(() => _fullscreen = !_fullscreen);
+    SystemChrome.setPreferredOrientations(_fullscreen
+        ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+        : const [DeviceOrientation.portraitUp]);
+  }
+
   void _openEpisodeSheet() {
     final l = context.read<AppState>().l;
     showModalBottomSheet<void>(
@@ -343,6 +353,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
               locked: _locked(index),
               episode: eps[index],
               unlockCost: _member?.unlockCost ?? 5,
+              fit: _fullscreen ? BoxFit.contain : BoxFit.cover,
               onUnlock: () => _unlockAt(index),
               onTapVideo: index == _current ? _togglePlay : null,
               onRetry: () => _ensure(index),
@@ -375,30 +386,35 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
                         ],
                       ),
                     ),
+                    _circleBtn(
+                      _fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                      _toggleFullscreen,
+                    ),
                   ],
                 ),
               ),
             ),
           ),
-          // right action rail (episodes list)
-          Positioned(
-            right: 10,
-            bottom: 130,
-            child: Column(
-              children: [
-                _railBtn(Icons.grid_view_rounded, l.pick('ตอน', 'Eps'), _openEpisodeSheet),
-                const SizedBox(height: 18),
-                _railBtn(
-                  _controllers[_current]?.value.isPlaying ?? false
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
-                  '',
-                  _togglePlay,
-                ),
-              ],
+          // right action rail (episodes list) — hidden in fullscreen/landscape
+          if (!_fullscreen)
+            Positioned(
+              right: 10,
+              bottom: 130,
+              child: Column(
+                children: [
+                  _railBtn(Icons.grid_view_rounded, l.pick('ตอน', 'Eps'), _openEpisodeSheet),
+                  const SizedBox(height: 18),
+                  _railBtn(
+                    _controllers[_current]?.value.isPlaying ?? false
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    '',
+                    _togglePlay,
+                  ),
+                ],
+              ),
             ),
-          ),
-          // bottom: ad (free users) + scrubber
+          // bottom: ad (free users, portrait only) + scrubber
           Positioned(
             left: 0,
             right: 0,
@@ -407,7 +423,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const AdBanner(placement: 'player', height: 56),
+                  if (!_fullscreen) const AdBanner(placement: 'player', height: 56),
                   _scrubber(),
                 ],
               ),
@@ -496,6 +512,7 @@ class _EpisodePage extends StatelessWidget {
     required this.locked,
     required this.episode,
     required this.unlockCost,
+    required this.fit,
     required this.onUnlock,
     required this.onTapVideo,
     required this.onRetry,
@@ -509,6 +526,7 @@ class _EpisodePage extends StatelessWidget {
   final bool locked;
   final Episode episode;
   final int unlockCost;
+  final BoxFit fit;
   final VoidCallback onUnlock;
   final VoidCallback? onTapVideo;
   final VoidCallback onRetry;
@@ -569,7 +587,7 @@ class _EpisodePage extends StatelessWidget {
           children: [
             if (ctrl != null && ctrl.value.isInitialized)
               FittedBox(
-                fit: BoxFit.cover,
+                fit: fit,
                 clipBehavior: Clip.hardEdge,
                 child: SizedBox(
                   width: ctrl.value.size.width,
