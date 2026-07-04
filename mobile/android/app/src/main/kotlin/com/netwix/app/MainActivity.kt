@@ -1,4 +1,4 @@
-package com.hivedownload.hivedownload
+package com.netwix.app
 
 import io.flutter.embedding.android.FlutterActivity
 

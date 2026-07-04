@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/xjanova/hivedownload/main/logo.png" alt="Hive Download" width="150" />
+  <img src="https://raw.githubusercontent.com/xjanova/netwixmobile/main/logo.png" alt="Hive Download" width="150" />
 </p>
 
 <h1 align="center">Hive Download</h1>
@@ -44,8 +44,8 @@
 **สิ่งที่ต้องมี:** Windows 10/11 · [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) · Visual Studio 2022 (17.12+) / 2026 หรือ VS Code / Rider
 
 ```bash
-git clone https://github.com/xjanova/hivedownload.git
-cd hivedownload
+git clone https://github.com/xjanova/netwixmobile.git
+cd netwixmobile
 
 # build & run
 dotnet run --project src/RongYokDownloader

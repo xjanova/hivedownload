@@ -60,7 +60,7 @@ The client (`AdService`) is wired and **degrades to a silent no-op until the
 endpoint exists**, so shipping now is safe. Implement:
 
 ```
-GET /api/ads?app=hivedownload&placement=player[&limit=N]     (public, no auth)
+GET /api/ads?app=netwix&placement=player[&limit=N]     (public, no auth)
 
 200 →
 {
@@ -117,8 +117,9 @@ dispatches `android-release.yml` to build the signed APK and publish the Release
 - Or edit `pubspec.yaml` + `git tag vX.Y.Z+B && git push origin main --tags`.
 
 `versionCode` = `B` and always increases (build is bumped every release).
-`applicationId` (`com.hivedownload`) and the signing key must **never change**
-across releases, or Android won't install the update over the old app.
+`applicationId` (`com.netwix.app`) and the signing key must **never change**
+across releases, or Android won't install the update over the old app. (Both were
+reset once, from `com.hivedownload`, for the NetWix rebrand — locked from now on.)
 
 > One-time repo setup: create the five `release:*` labels, and ensure `main`
 > allows the `github-actions[bot]` push (no blocking branch protection, or

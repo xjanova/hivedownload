@@ -96,19 +96,19 @@ jobs:
 
       - name: Stage APK
         working-directory: mobile
-        run: cp build/app/outputs/flutter-apk/app-release.apk hivedownload-${{ steps.ver.outputs.name }}.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk netwix-${{ steps.ver.outputs.name }}.apk
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hivedownload-apk
-          path: mobile/hivedownload-*.apk
+          name: netwix-apk
+          path: mobile/netwix-*.apk
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          files: mobile/hivedownload-*.apk
+          files: mobile/netwix-*.apk
           generate_release_notes: true
           fail_on_unmatched_files: true

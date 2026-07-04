@@ -32,7 +32,7 @@ class AutoUpdater {
             ));
 
   static const String owner = 'xjanova';
-  static const String repo = 'hivedownload';
+  static const String repo = 'netwixmobile';
   static String get latestReleaseApi =>
       'https://api.github.com/repos/$owner/$repo/releases/latest';
 
@@ -118,7 +118,7 @@ class AutoUpdater {
     try {
       final stream = OtaUpdate().execute(
         url,
-        destinationFilename: 'hivedownload-${info.latestVersion}.apk',
+        destinationFilename: 'netwix-${info.latestVersion}.apk',
         usePackageInstaller: true,
       );
 

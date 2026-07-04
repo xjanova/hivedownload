@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hivedownload/services/update_info.dart';
+import 'package:netwix/services/update_info.dart';
 
 void main() {
   group('isReleaseNewer', () {

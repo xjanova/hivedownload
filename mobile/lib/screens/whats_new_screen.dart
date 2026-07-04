@@ -26,7 +26,7 @@ class _WhatsNewScreenState extends State<WhatsNewScreen> {
   void initState() {
     super.initState();
     PackageInfo.fromPlatform().then((p) {
-      if (mounted) setState(() => _version = 'v${p.version} (${p.buildNumber})');
+      if (mounted) setState(() => _version = 'v${p.version}');
     });
   }
 

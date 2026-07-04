@@ -29,7 +29,7 @@ class CatalogDb {
 
   static Future<CatalogDb> open() async {
     final dir = await getApplicationSupportDirectory();
-    final path = p.join(dir.path, 'hivedownload.db');
+    final path = p.join(dir.path, 'netwix.db');
     final db = await openDatabase(
       path,
       version: 2,

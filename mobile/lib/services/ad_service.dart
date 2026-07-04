@@ -15,14 +15,14 @@ import '../models/ad.dart';
 /// so shipping it now is safe.
 ///
 /// ── Backend contract to implement on main.thaiprompt.online (Laravel) ──
-/// GET /api/ads?app=hivedownload&placement=player[&limit=N]
+/// GET /api/ads?app=netwix&placement=player[&limit=N]
 ///   → { "success": true,
 ///       "data": [ { "id", "image_url", "click_url"?, "weight"?,
 ///                   "duration_ms"?, "placement"?, "starts_at"?, "ends_at"? } ],
 ///       "rotate_ms": 8000 }
 /// Public (no auth). Matches the ecosystem envelope ({success,data,...}).
 class AdService extends ChangeNotifier {
-  AdService({Dio? dio, this.app = 'hivedownload'})
+  AdService({Dio? dio, this.app = 'netwix'})
       : _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl,

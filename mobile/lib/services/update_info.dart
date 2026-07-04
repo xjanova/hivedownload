@@ -89,9 +89,8 @@ class UpdateInfo {
   final String? apkUrl;
   final int apkSizeBytes;
 
-  /// Human "vX.Y.Z (build N)" for display.
-  String get latestLabel =>
-      latestBuild > 0 ? 'v$latestVersion ($latestBuild)' : 'v$latestVersion';
+  /// Human "vX.Y.Z" for display (clean semver, no build suffix).
+  String get latestLabel => 'v$latestVersion';
 
   String get sizeLabel {
     if (apkSizeBytes <= 0) return '';

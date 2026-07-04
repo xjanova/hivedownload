@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.hivedownload" "\0"
-            VALUE "FileDescription", "hivedownload" "\0"
+            VALUE "CompanyName", "com.netwix.app" "\0"
+            VALUE "FileDescription", "netwix" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "hivedownload" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.hivedownload. All rights reserved." "\0"
-            VALUE "OriginalFilename", "hivedownload.exe" "\0"
-            VALUE "ProductName", "hivedownload" "\0"
+            VALUE "InternalName", "netwix" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.netwix.app. All rights reserved." "\0"
+            VALUE "OriginalFilename", "netwix.exe" "\0"
+            VALUE "ProductName", "netwix" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

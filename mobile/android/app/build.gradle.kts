@@ -20,7 +20,7 @@ if (hasKeystore) {
 }
 
 android {
-    namespace = "com.hivedownload.hivedownload"
+    namespace = "com.netwix.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -36,8 +36,9 @@ android {
     }
 
     defaultConfig {
-        // Locked for the life of the app — changing it breaks in-app auto-update.
-        applicationId = "com.hivedownload"
+        // netwix rebrand (2026-07): reset once from com.hivedownload. Locked henceforth —
+        // changing it breaks in-app auto-update and orphans existing installs.
+        applicationId = "com.netwix.app"
         minSdk = 24 // Android 7.0 — required by ota_update FileProvider install intent
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
