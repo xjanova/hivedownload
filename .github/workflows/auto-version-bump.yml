@@ -6,7 +6,7 @@ name: Auto Version Bump
 # Flow (matches thaipromptadminapp / juntra):
 #   merge PR to main  ─▶  read release:* label (default patch)
 #                         bump pubspec X.Y.Z + always build+1
-#                         commit "[skip ci]" + push tag vX.Y.Z+B
+#                         commit "[skip ci]" + push tag vX.Y.Z
 #                         ─▶ dispatch android-release.yml (build + publish)
 #
 # Why dispatch instead of relying on the tag push: a tag pushed with the default
@@ -78,11 +78,12 @@ jobs:
             major) MA=$((MA+1)); MI=0; PA=0 ;;
             minor) MI=$((MI+1)); PA=0 ;;
             patch) PA=$((PA+1)) ;;
-            build) ;;
+            build) PA=$((PA+1)) ;;
           esac
-          BUILD=$((BUILD+1))
-          NEW="$MA.$MI.$PA+$BUILD"
-          TAG="v$MA.$MI.$PA+$BUILD"
+          # Clean semver only — no +build suffix. versionCode comes from the CI
+          # run_number (android-release.yml), so it still always increases.
+          NEW="$MA.$MI.$PA"
+          TAG="v$MA.$MI.$PA"
           sed -i -E "s/^version:.*/version: $NEW/" pubspec.yaml
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"

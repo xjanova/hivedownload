@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 /// Design tokens for the **NetWix** brand — neon crimson→violet on a cool,
 /// cinematic near-black. All accent values are centralised so a re-tint is a
-/// one-file change. (Rebranded from the original "honey" Hive Download theme.)
+/// one-file change.
 class T {
   T._();
 

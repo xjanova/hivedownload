@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-/// Human-readable formatting helpers. Ported from RongYokDownloader.Services.Format.
+/// Human-readable formatting helpers.
 class Format {
   static String bytes(int b) {
     if (b <= 0) return '0 B';

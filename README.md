@@ -1,113 +1,60 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/xjanova/netwixmobile/main/logo.png" alt="Hive Download" width="150" />
+  <img src="https://raw.githubusercontent.com/xjanova/netwixmobile/main/mobile/assets/brand/netwix-wordmark.png" alt="NetWix" width="360" />
 </p>
 
-<h1 align="center">Hive Download</h1>
-<p align="center"><b>Smart Media Downloader</b></p>
-<p align="center">โปรแกรมเดสก์ท็อปสำหรับ <b>เรียกดู · ดาวน์โหลด · สตรีม · จัดระเบียบ · เปิดดู</b> ซีรี่ส์/หนังสั้นจีนจาก <a href="https://rongyok.com">rongyok.com (โรงหยก)</a></p>
+<h1 align="center">NetWix — Mobile App</h1>
+<p align="center"><b>สตรีมภาพยนตร์ · ซีรีส์ · ซีรีส์แนวตั้ง · อนิเมะ</b><br/>แอป Android อย่างเป็นทางการของ <a href="https://netwix.online">netwix.online</a></p>
 
 <p align="center">
-  <img alt=".NET 9" src="https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white" />
-  <img alt="WPF" src="https://img.shields.io/badge/WPF-Windows%2010%2F11-0078D6?logo=windows&logoColor=white" />
-  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-Dapper-003B57?logo=sqlite&logoColor=white" />
-  <img alt="MVVM" src="https://img.shields.io/badge/MVVM-CommunityToolkit-6E56CF" />
-  <img alt="license" src="https://img.shields.io/badge/use-personal%20%2F%20educational-lightgrey" />
+  <img alt="Flutter" src="https://img.shields.io/badge/Flutter-3.41-02569B?logo=flutter&logoColor=white" />
+  <img alt="Android" src="https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white" />
+  <img alt="backend" src="https://img.shields.io/badge/backend-netwix.online-B026FF" />
+  <img alt="updates" src="https://img.shields.io/badge/updates-in--app%20OTA-FF2D55" />
 </p>
 
 ---
 
-> ⚠️ **สำหรับการเรียนรู้และรับชมส่วนตัว (offline) เท่านั้น** — ผู้ใช้มีหน้าที่ปฏิบัติตามกฎหมายลิขสิทธิ์และเงื่อนไขการให้บริการของเว็บไซต์ต้นทาง โปรดเคารพผู้สร้างผลงาน
->
-> *For personal / educational use only. Respect copyright and the source site's Terms of Service.*
-
-<br/>
+แอปมือถือของ **NetWix** — ดึงเนื้อหาและสตรีมทั้งหมดจาก `netwix.online` (`/api/app/*`)
+เล่นได้ทั้ง **MP4** และ **HLS** ทุกเรื่องดูฟรี · **Pro (129฿/เดือน) แค่ตัดโฆษณา**
 
 ## ✨ ฟีเจอร์
 
-- **🗂️ คลังซีรี่ส์** — ดึงรายการทั้งหมด (~2,300+ เรื่อง) มาแสดงเป็นตารางปก ค้นหา · กรอง (พากย์ไทย/ซับไทย) · จัดเรียง (ล่าสุด/ยอดนิยม/ชื่อเรื่อง)
-- **🔍 สแกนหาของใหม่** — ปุ่มเดียวเทียบกับฐานข้อมูล แจ้ง **ซีรี่ส์ใหม่** + **ตอนใหม่** (เรื่องที่เคยโหลด) กดโหลดได้ทันที
-- **⬇️ ดาวน์โหลดหลายไฟล์พร้อมกัน** — เลือกทีละตอน / เฉพาะที่ยังไม่มี / ทั้งเรื่อง · ปรับจำนวนพร้อมกัน 1–8 · แถบความคืบหน้า/ความเร็ว · **หยุด–เล่นต่อ (resume)** · ลองใหม่เมื่อพลาด
-- **📁 จัดระเบียบอัตโนมัติ** — แยกโฟลเดอร์ตามเรื่อง `ชื่อเรื่อง (พากย์ไทย)/ชื่อ - EP01.mp4` พร้อม `poster.jpg` และ **สารบัญ `index.html`**
-- **🎬 เครื่องเล่นในตัว**
-  - เล่นต่อเนื่องตามลำดับตอนเป๊ะ ๆ (รอโหลดตอนถัดไปให้ถ้าจำเป็น)
-  - **โหมดสตรีม** — ดูได้เลยไม่ต้องเก็บไฟล์ · **โหมดโหลดล่วงหน้า (prefetch)**
-  - แตะตอนที่ยังไม่มี = โหลดทันที · ดับเบิลคลิก = สตรีมทันที
-  - คอนโทรล **auto-hide** ขณะดู
-- **🖼️ พื้นหลังพรีวิวแบบ Netflix** — หน้ารายละเอียดเล่น EP.1 (โหลดไว้ก่อน) วนลูป มีเสียง วิดีโอตั้งคมชัดกลางจอ + พื้นหลังเบลอสลัว ขอบเฟดเนียน
-- **🎨 ธีม RGB นีออน** — ไฟสีรุ้งไล่หมุนวนบนพื้นดำ, toggle switch, สกรอลบาร์บางทันสมัย
-- **💾 SQLite** — จำรายการ · สถานะการโหลด · การตั้งค่า
+- **คลังเต็ม** — ภาพยนตร์ · ซีรีส์ · ซีรีส์แนวตั้ง · อนิเมะ (ซิงก์ตรงกับเว็บผ่าน home rails + หมวด)
+- **เล่นทันที** — สตรีม MP4/HLS · พรีวิว EP1 อัตโนมัติแบบ Netflix · โหมดเต็มจอ
+- **สมาชิก** — ล็อกอินผ่านเว็บ NetWix (Google / LINE / อีเมล) ด้วย deep link `netwix://`
+- **เหรียญ & Pro** — สะสมเหรียญปลดล็อกตอน · ชวนเพื่อนรับ Pro ฟรี · Pro ตัดโฆษณา
+- **อัปเดตในแอป (OTA)** — ดึง GitHub Release ล่าสุดมาติดตั้งทับให้เอง
 
-<br/>
+## 🚀 พัฒนา / รัน
 
-## 🚀 เริ่มใช้งาน
-
-**สิ่งที่ต้องมี:** Windows 10/11 · [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) · Visual Studio 2022 (17.12+) / 2026 หรือ VS Code / Rider
+ต้องมี [Flutter 3.41+](https://docs.flutter.dev/get-started/install) + Android SDK
 
 ```bash
 git clone https://github.com/xjanova/netwixmobile.git
-cd netwixmobile
+cd netwixmobile/mobile
 
-# build & run
-dotnet run --project src/RongYokDownloader
+flutter pub get
+flutter run                 # debug บนอุปกรณ์ / emulator
+flutter build apk --release
 ```
 
-หรือดับเบิลคลิก `RongYokDownloader.sln` แล้วกด **F5** ใน Visual Studio
+โค้ดแอปทั้งหมดอยู่ใน **`mobile/`** (Flutter) · Backend เป็น Laravel ที่ `netwix.online` (repo แยก `xjanova/netwix`)
 
-> ครั้งแรกที่เปิด แท็บ **คลังซีรี่ส์** จะดึงรายการจากเว็บอัตโนมัติ
+## 📦 ออกเวอร์ชัน (release + OTA)
 
-<br/>
+`mobile/pubspec.yaml` → `version:` คือ single source of truth และเป็น **semver ล้วน** (เช่น `1.0.0` — ไม่มี `+build`)
 
-## 🧩 โครงสร้างโปรเจกต์ (MVVM)
+- **อัตโนมัติ:** merge PR เข้า `main` พร้อม label `release:patch|minor|major` → *Auto Version Bump* จะ bump + tag + สั่ง build
+- **ด้วยมือ:** แก้ `version:` ใน pubspec แล้ว `git tag vX.Y.Z && git push origin main vX.Y.Z`
 
-```
-src/RongYokDownloader/
-├─ Models/        Series, Episode, ScanResult, enums
-├─ Data/          Db.cs            → SQLite (Dapper): schema + CRUD
-├─ Services/
-│   ├─ RongYokClient.cs   → ตัวคุยกับเว็บ (3 endpoint)
-│   ├─ JsonExtract.cs     → ดึง JSON ที่ฝังในหน้าเว็บ
-│   ├─ DownloadManager.cs → คิว + ดาวน์โหลดพร้อมกัน + resume
-│   ├─ FileNamer.cs · TocGenerator.cs · SettingsStore.cs
-├─ ViewModels/    Catalog / SeriesDetail / Downloads / Library / Player / Settings / Main / WhatsNew
-├─ Views/         ไฟล์ .xaml + code-behind ของแต่ละหน้า
-├─ Converters/    UrlToImage · ImageLoader · สถานะ ฯลฯ
-└─ Themes/        Theme.xaml — ธีม RGB นีออน + toggle/scrollbar
-```
+CI (`android-release.yml`) build APK ที่เซ็นด้วย keystore แล้วเผยแพร่เป็น GitHub Release —
+แอปที่ติดตั้งไว้เห็นและอัปเดตให้เองผ่าน OTA (`applicationId com.netwix.app` + signing key คงที่ตลอด)
 
-**ที่เก็บข้อมูล:** `%LocalAppData%\RongYokDownloader\rongyok.db`
-**ที่เก็บวิดีโอ (เริ่มต้น):** `%UserProfile%\Videos\RongYok` (เปลี่ยนได้ในหน้าตั้งค่า)
+## 🧱 Stack
 
-<br/>
-
-## 🔌 เว็บทำงานอย่างไร
-
-| จุดประสงค์ | Endpoint | ผลลัพธ์ |
-|---|---|---|
-| รายการทั้งหมด | `GET /category?category=all` | JS ฝัง `seriesData = [...]` (id, title, description, poster) |
-| รายชื่อตอน | `GET /watch/?series_id={id}` | `episodes_count` + `episodes[]` |
-| ลิงก์วิดีโอ | `GET /watch/get_video.php?series_id={id}&ep={n}` | `{"ok":true,"video_url":"…mp4…"}` |
-
-ไฟล์วิดีโอเป็น **MP4** โฮสต์บน CDN (ลิงก์เซ็นชื่อ หมดอายุ ~24 ชม. โปรแกรมจึงขอลิงก์ใหม่ทุกครั้งที่เริ่มโหลด) — ไม่มีแคปช่า ไม่มี DRM
-
-<br/>
-
-## 🎞️ หมายเหตุเรื่องการเล่นไฟล์
-
-เครื่องเล่นในตัวใช้ WPF `MediaElement` ซึ่งพึ่งตัวถอดรหัสของ Windows:
-- **H.264/AAC** เล่นได้ทันที
-- **HEVC/H.265** อาจต้องติดตั้ง *HEVC Video Extensions* จาก Microsoft Store
-- ต้องการรองรับทุกโคเดก + สตรีมลื่นทุกไฟล์ → เปลี่ยนไปใช้ **LibVLCSharp.WPF** ได้
-
-<br/>
-
-## 🛠️ Tech Stack
-
-`.NET 9` · `WPF` · `CommunityToolkit.Mvvm` · `Microsoft.Data.Sqlite` + `Dapper` · `HttpClient`
-
-<br/>
+`Flutter` · `Dio` · `Provider` · `video_player` · `sqflite` · `ota_update`
+แบรนด์นีออน `#FF2D55 → #B026FF` · ฟอนต์ **Kanit**
 
 ## ⚖️ Disclaimer
 
-โปรแกรมนี้จัดทำเพื่อการศึกษาและการรับชมส่วนตัว (offline) เท่านั้น ผู้พัฒนาไม่ได้มีส่วนเกี่ยวข้องกับ rongyok.com และไม่รับผิดชอบต่อการนำไปใช้ผิดวัตถุประสงค์ ผู้ใช้ต้องรับผิดชอบการปฏิบัติตามกฎหมายลิขสิทธิ์และเงื่อนไขการให้บริการของเว็บไซต์ต้นทางด้วยตนเอง
-
-*This project is for educational and personal (offline) use only. It is not affiliated with rongyok.com. Users are solely responsible for complying with copyright law and the source site's Terms of Service.*
+สำหรับการรับชมส่วนตัวเท่านั้น — เนื้อหาทั้งหมดให้บริการผ่าน **netwix.online**
