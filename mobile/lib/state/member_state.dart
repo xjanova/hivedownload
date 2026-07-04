@@ -250,28 +250,26 @@ class MemberState extends ChangeNotifier {
   }
 
   // -------------------------------------------------- social → coins
-  // Small local coin nudges for like/comment/share (signed-in only, daily-
-  // capped). The server has no earn kind for these, so they're a best-effort
-  // local mirror — the balance snaps to server truth on the next refresh.
+  // like/comment/share now earn REAL coins server-side (POST /coins/earn),
+  // capped per day by the server ledger. Signed-in only.
 
-  Future<int> _awardCapped(String key, int coins, int dailyMax) async {
+  Future<int> _awardServer(String kind, int fallback) async {
     if (!isLoggedIn) return 0;
-    if (_store.activityCount(_today, key) >= dailyMax) return 0;
-    await _store.bumpActivity(_today, key);
-    await _addCoins(coins);
+    final before = _coins;
+    final res = await _api.earnCoins(kind);
+    if (res.state != null) _applyState(res.state);
     notifyListeners();
-    return coins;
+    if (!res.ok) return 0; // capped for today (or offline)
+    final earned = _coins - before;
+    return earned > 0 ? earned : fallback;
   }
 
   /// +coins for liking a title (only when turning a like ON; capped/day).
-  Future<int> awardLike() =>
-      _awardCapped('like', RewardConfig.likeCoins, RewardConfig.likeDailyMax);
+  Future<int> awardLike() => _awardServer('like', RewardConfig.likeCoins);
 
   /// +coins for posting a comment (capped/day).
-  Future<int> awardComment() =>
-      _awardCapped('comment', RewardConfig.commentCoins, RewardConfig.commentDailyMax);
+  Future<int> awardComment() => _awardServer('comment', RewardConfig.commentCoins);
 
   /// +coins for sharing a title or an invite (capped/day).
-  Future<int> awardShare() =>
-      _awardCapped('share', RewardConfig.shareCoins, RewardConfig.shareDailyMax);
+  Future<int> awardShare() => _awardServer('share', RewardConfig.shareCoins);
 }

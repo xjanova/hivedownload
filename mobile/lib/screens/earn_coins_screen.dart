@@ -16,7 +16,10 @@ import 'reward_watch_screen.dart';
 
 /// หาเหรียญ · Earn coins — the activities I defined (backend can add more).
 class EarnCoinsScreen extends StatelessWidget {
-  const EarnCoinsScreen({super.key});
+  const EarnCoinsScreen({super.key, this.embedded = false});
+
+  /// True when hosted as a bottom-nav tab (no back button).
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +29,7 @@ class EarnCoinsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.transparent,
+        automaticallyImplyLeading: !embedded,
         title: Text(l.bi('หาเหรียญ', 'Earn coins'), style: AppTheme.display(18, weight: FontWeight.w700)),
       ),
       body: DecoratedBox(

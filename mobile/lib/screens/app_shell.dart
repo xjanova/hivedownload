@@ -7,6 +7,7 @@ import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import '../widgets/update_sheet.dart';
 import 'catalog_grid_screen.dart';
+import 'earn_coins_screen.dart';
 import 'home_screen.dart';
 import 'menu_screen.dart';
 
@@ -43,6 +44,7 @@ class _AppShellState extends State<AppShell> {
             children: [
               HomeScreen(onOpenExplore: () => setState(() => _index = 1)),
               const CatalogGridScreen(),
+              const EarnCoinsScreen(embedded: true),
               const MenuScreen(),
             ],
           ),
@@ -54,6 +56,7 @@ class _AppShellState extends State<AppShell> {
         items: [
           _NavItem(Icons.home_rounded, l.pick('หน้าแรก', 'Home')),
           _NavItem(Icons.travel_explore_rounded, l.pick('สำรวจ', 'Explore')),
+          _NavItem(Icons.monetization_on_rounded, l.pick('หาเหรียญ', 'Coins')),
           _NavItem(Icons.menu_rounded, l.pick('เมนู', 'Menu')),
         ],
       ),
