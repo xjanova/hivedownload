@@ -221,6 +221,17 @@ class NetwixApi {
   //   {is_pro, plan, pro_until, coins, referral_code, referred,
   //    referrals_count, daily_checkin_available}
 
+  /// The member's affiliate downline (levels + members + dividend earned) for
+  /// the "My Team" screen. Null on failure.
+  Future<Map<String, dynamic>?> fetchTeam() async {
+    try {
+      return _data(await _dio.get('/team', options: _opts));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix team: $e');
+      return null;
+    }
+  }
+
   /// The member's Pro / coins / referral state (token-only). Null on failure.
   Future<Map<String, dynamic>?> fetchMembership() async {
     try {

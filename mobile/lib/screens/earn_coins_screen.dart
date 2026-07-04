@@ -13,6 +13,7 @@ import '../theme/tokens.dart';
 import '../widgets/common.dart';
 import '../widgets/referral_promo_card.dart';
 import 'reward_watch_screen.dart';
+import 'team_screen.dart';
 
 /// หาเหรียญ · Earn coins — the activities I defined (backend can add more).
 class EarnCoinsScreen extends StatelessWidget {
@@ -42,6 +43,33 @@ class EarnCoinsScreen extends StatelessWidget {
 
             // ⭐ Headline promo: invite 3 qualified friends → 2 months Pro free.
             ReferralPromoCard(onShare: () => _shareReferral(context, member, l)),
+
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => const TeamScreen())),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0x0DFFFFFF),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: T.hairline),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.groups_rounded, color: T.accent, size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(l.bi('ทีมของฉัน / สายงาน', 'My Team'),
+                          style: AppTheme.body(14, weight: FontWeight.w700, color: T.textPrimary)),
+                      Text(l.pick('ดูลูกทีมและเหรียญปันผล', 'Downline & dividend coins'),
+                          style: AppTheme.body(11.5, color: T.textMuted)),
+                    ]),
+                  ),
+                  const Icon(Icons.chevron_right_rounded, color: T.textMuted),
+                ]),
+              ),
+            ),
 
             if (!member.isLoggedIn) _loginCard(context, l),
 
