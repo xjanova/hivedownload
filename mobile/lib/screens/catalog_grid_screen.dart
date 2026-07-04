@@ -117,18 +117,37 @@ class _CatalogGridScreenState extends State<CatalogGridScreen> {
                       ? Center(
                           child: Text(l.pick('ไม่พบผลลัพธ์', 'No results'),
                               style: AppTheme.body(14, color: T.textMuted)))
-                      : GridView.builder(
-                          padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 16,
-                            childAspectRatio: 0.5,
+                      : NotificationListener<ScrollNotification>(
+                          // Lazy-load the next page when near the bottom.
+                          onNotification: (n) {
+                            if (n.metrics.axis == Axis.vertical &&
+                                n.metrics.pixels >= n.metrics.maxScrollExtent - 600 &&
+                                catalog.hasMore &&
+                                !catalog.loadingMore) {
+                              catalog.loadMore();
+                            }
+                            return false;
+                          },
+                          child: GridView.builder(
+                            padding: const EdgeInsets.fromLTRB(18, 4, 18, 24),
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 3,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 16,
+                              childAspectRatio: 0.5,
+                            ),
+                            itemCount: list.length,
+                            itemBuilder: (_, i) =>
+                                PortraitPosterCard(content: list[i], width: double.infinity),
                           ),
-                          itemCount: list.length,
-                          itemBuilder: (_, i) => PortraitPosterCard(content: list[i], width: double.infinity),
                         ),
         ),
+        if (catalog.loadingMore)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 6),
+            child: LinearProgressIndicator(
+                minHeight: 2, color: T.accent, backgroundColor: Colors.transparent),
+          ),
       ],
     );
   }

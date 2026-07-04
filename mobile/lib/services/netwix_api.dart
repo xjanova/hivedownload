@@ -65,11 +65,11 @@ class NetwixApi {
     }
   }
 
-  /// Titles, paginated. Narrow by media [type] (series|movie|vertical), by
-  /// [genre] slug, or set [anime] for the anime/cartoon bucket. With none of
-  /// those, anime is excluded server-side (mirrors the web browse).
-  Future<List<Content>> fetchTitles(
-      {String? type, String? genre, bool anime = false, int page = 1, int per = 24}) async {
+  /// One page of titles + total + whether more pages exist — for the Explore
+  /// grid's infinite scroll. Narrow by media [type] (series|movie|vertical), by
+  /// [genre] slug, or set [anime] for the anime/cartoon bucket.
+  Future<PagedContent> fetchTitlesPage(
+      {String? type, String? genre, bool anime = false, int page = 1, int per = 30}) async {
     try {
       final d = _data(await _dio.get('/titles', queryParameters: {
         'type': ?type,
@@ -78,10 +78,26 @@ class NetwixApi {
         'page': page,
         'per': per,
       }, options: _opts));
-      return _contentList(d?['items']);
+      return PagedContent(
+        _contentList(d?['items']),
+        d?['has_more'] == true,
+        total: (d?['total'] as num?)?.toInt() ?? 0,
+      );
     } catch (e) {
-      if (kDebugMode) debugPrint('netwix fetchTitles: $e');
-      return const [];
+      if (kDebugMode) debugPrint('netwix fetchTitlesPage: $e');
+      return const PagedContent(<Content>[], false);
+    }
+  }
+
+  /// One page of server-side search results (matches title + synopsis).
+  Future<PagedContent> searchPage(String q, {int page = 1}) async {
+    try {
+      final d = _data(await _dio.get('/search',
+          queryParameters: {'q': q, 'page': page}, options: _opts));
+      return PagedContent(_contentList(d?['items']), d?['has_more'] == true);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix searchPage: $e');
+      return const PagedContent(<Content>[], false);
     }
   }
 
@@ -114,16 +130,6 @@ class NetwixApi {
     } catch (e) {
       if (kDebugMode) debugPrint('netwix fetchDetail: $e');
       return null;
-    }
-  }
-
-  Future<List<Content>> search(String q) async {
-    try {
-      final d = _data(await _dio.get('/search', queryParameters: {'q': q}, options: _opts));
-      return _contentList(d?['items']);
-    } catch (e) {
-      if (kDebugMode) debugPrint('netwix search: $e');
-      return const [];
     }
   }
 
@@ -341,6 +347,14 @@ class NetwixHome {
   const NetwixHome({this.hero, required this.rails});
   final Content? hero;
   final List<NetwixRail> rails;
+}
+
+/// One page of catalog results (for infinite scroll / search).
+class PagedContent {
+  const PagedContent(this.items, this.hasMore, {this.total = 0});
+  final List<Content> items;
+  final bool hasMore;
+  final int total; // server total for the query (0 when unknown, e.g. search)
 }
 
 /// One genre in the taxonomy (`GET /genres`) — backs an Explore category chip.

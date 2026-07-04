@@ -43,52 +43,87 @@ class CatalogCategory {
   ];
 }
 
-/// Catalog sourced entirely from NetWix (`/api/app/*`). Cache-first: paints the
-/// SQLite-cached list instantly, then refreshes from NetWix.
+/// Catalog sourced entirely from NetWix (`/api/app/*`). Cache-first, and
+/// **paginated**: each category (and the search view) accumulates pages as the
+/// user scrolls, and search hits the server so it finds the whole 2500+ catalog
+/// — not just the first page held on-device.
 class CatalogState extends ChangeNotifier {
   CatalogState(this._api, this._db);
   final NetwixApi _api;
   final CatalogDb _db;
 
-  List<Content> _all = [];
+  static const int _perPage = 30;
+  static const String _searchKey = 'search';
+
   Content? _hero;
   List<NetwixRail> _rails = const [];
   List<CatalogCategory> _genreCats = const [];
-  // Server-fetched results per non-'all' category, cached by category id so
-  // re-tapping a chip doesn't refetch.
-  final Map<String, List<Content>> _byId = {};
-  bool loading = false;
-  bool filterLoading = false;
+
+  // Paginated feeds keyed by view id ('all' | 'series' | 'g:slug' | 'anime' |
+  // 'search'); page cursor + has-more tracked per key.
+  final Map<String, List<Content>> _items = {};
+  final Map<String, int> _pages = {};
+  final Map<String, bool> _more = {};
+  int _totalAll = 0;
+
+  bool loading = false; // initial catalog load
+  bool filterLoading = false; // switching category / running a fresh search
+  bool loadingMore = false; // appending the next page
   String? error;
   String _query = '';
+  Timer? _searchDebounce;
   CatalogCategory _current = CatalogCategory.all;
 
-  bool get isEmpty => _all.isEmpty;
-  int get total => _all.length;
+  bool get isEmpty => (_items['all'] ?? const []).isEmpty;
+  int get total => _totalAll > 0 ? _totalAll : (_items['all'] ?? const []).length;
   String get query => _query;
   Content? get hero => _hero;
 
   /// The web's curated home rails (trending + genre rails incl. an anime rail).
   List<NetwixRail> get rails => _rails;
 
-  /// Base chips + the server genre taxonomy (anime is already the base 'anime'
-  /// chip, so the genre-anime entries are dropped here to avoid duplicates).
   List<CatalogCategory> get categories => [...CatalogCategory.base, ..._genreCats];
   CatalogCategory get current => _current;
 
+  /// The key of the currently displayed feed: the search bucket while a query
+  /// is active, otherwise the selected category.
+  String get _key => _query.isNotEmpty ? _searchKey : _current.id;
+
+  /// The items to render right now (search results or the active category).
+  List<Content> get visible => _items[_key] ?? const [];
+
+  /// Whether the current feed has more pages to lazy-load.
+  bool get hasMore => _more[_key] ?? false;
+
+  List<Content> get featured {
+    final all = List<Content>.from(_items['all'] ?? const [])
+      ..sort((a, b) => b.views.compareTo(a.views));
+    return all.take(10).toList();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
+
   Future<void> load({bool force = false}) async {
     if (loading) return;
-    if (_all.isNotEmpty && !force) return;
+    if (_items.containsKey('all') && !force) return;
     loading = true;
     error = null;
-    if (force) _byId.clear(); // drop cached category results on manual refresh
+    if (force) {
+      _items.clear();
+      _pages.clear();
+      _more.clear();
+    }
     notifyListeners();
 
-    if (_all.isEmpty) {
+    if (!_items.containsKey('all')) {
       try {
         final cached = await _db.getAllContent();
         if (cached.isNotEmpty) {
-          _all = cached;
+          _items['all'] = cached;
           notifyListeners();
         }
       } catch (e) {
@@ -98,8 +133,8 @@ class CatalogState extends ChangeNotifier {
 
     try {
       final home = await _api.fetchHome();
-      final titles = await _api.fetchTitles(per: 48);
       final genres = await _api.fetchGenres();
+      final first = await _api.fetchTitlesPage(per: _perPage, page: 1);
       _hero = home?.hero;
       if (home != null && home.rails.isNotEmpty) _rails = home.rails;
       if (genres.isNotEmpty) {
@@ -113,15 +148,20 @@ class CatalogState extends ChangeNotifier {
                 ))
             .toList();
       }
-      if (titles.isNotEmpty) {
-        _all = titles;
-        unawaited(_db.upsertContent(titles));
+      if (first.items.isNotEmpty) {
+        _items['all'] = first.items;
+        _pages['all'] = 1;
+        _more['all'] = first.hasMore;
+        _totalAll = first.total;
+        unawaited(_db.upsertContent(first.items));
         error = null;
-      } else if (_all.isEmpty) {
+      } else if ((_items['all'] ?? const []).isEmpty) {
         error = 'โหลดคลังหนังไม่สำเร็จ ตรวจสอบการเชื่อมต่อ';
       }
     } catch (e) {
-      if (_all.isEmpty) error = 'โหลดคลังหนังไม่สำเร็จ ตรวจสอบการเชื่อมต่อ';
+      if ((_items['all'] ?? const []).isEmpty) {
+        error = 'โหลดคลังหนังไม่สำเร็จ ตรวจสอบการเชื่อมต่อ';
+      }
       if (kDebugMode) debugPrint('catalog load: $e');
     } finally {
       loading = false;
@@ -129,48 +169,93 @@ class CatalogState extends ChangeNotifier {
     }
   }
 
+  /// Debounced server search. Empty query returns to the category view.
   void setQuery(String q) {
-    _query = q.trim();
-    notifyListeners();
-  }
-
-  /// Switch category. 'all' shows the cached full list; any other category is
-  /// fetched from the server (`/titles?type=|genre=|anime=`) and cached by id.
-  Future<void> setCategory(CatalogCategory cat) async {
-    if (_current.id == cat.id) return;
-    _current = cat;
-    notifyListeners();
-    if (cat.isAll || _byId.containsKey(cat.id)) return; // cached / no fetch
-    filterLoading = true;
-    notifyListeners();
-    try {
-      _byId[cat.id] = await _api.fetchTitles(
-          type: cat.type, genre: cat.genre, anime: cat.anime, per: 60);
-    } catch (e) {
-      _byId[cat.id] = const [];
-      if (kDebugMode) debugPrint('catalog setCategory(${cat.id}): $e');
-    } finally {
+    q = q.trim();
+    if (q == _query) return;
+    _query = q;
+    _searchDebounce?.cancel();
+    // Fresh query → drop the previous search page cache.
+    _items.remove(_searchKey);
+    _pages.remove(_searchKey);
+    _more.remove(_searchKey);
+    if (q.isEmpty) {
       filterLoading = false;
       notifyListeners();
+      return;
     }
+    filterLoading = true;
+    notifyListeners();
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+      unawaited(_loadSearch(reset: true));
+    });
   }
 
-  /// The items backing the current category (before search is applied).
-  List<Content> get _source =>
-      _current.isAll ? _all : (_byId[_current.id] ?? const []);
-
-  List<Content> get visible {
-    Iterable<Content> list = _source;
+  /// Switch category (exits search). Loads the first page if not cached.
+  Future<void> setCategory(CatalogCategory cat) async {
+    if (_current.id == cat.id && _query.isEmpty) return;
+    _current = cat;
     if (_query.isNotEmpty) {
-      final q = _query.toLowerCase();
-      list = list.where((c) =>
-          c.title.toLowerCase().contains(q) || c.synopsis.toLowerCase().contains(q));
+      _query = '';
+      _searchDebounce?.cancel();
+      _items.remove(_searchKey);
+      _pages.remove(_searchKey);
+      _more.remove(_searchKey);
     }
-    return list.toList();
+    notifyListeners();
+    if (_items.containsKey(cat.id)) return; // already loaded
+    filterLoading = true;
+    notifyListeners();
+    await _loadCategory(cat, reset: true);
+    filterLoading = false;
+    notifyListeners();
   }
 
-  List<Content> get featured {
-    final copy = List<Content>.from(_all)..sort((a, b) => b.views.compareTo(a.views));
-    return copy.take(10).toList();
+  /// Lazy-load the next page of the current feed (category or search).
+  Future<void> loadMore() async {
+    if (loadingMore || !hasMore) return;
+    loadingMore = true;
+    notifyListeners();
+    if (_query.isNotEmpty) {
+      await _loadSearch();
+    } else {
+      await _loadCategory(_current);
+    }
+    loadingMore = false;
+    notifyListeners();
+  }
+
+  Future<void> _loadCategory(CatalogCategory cat, {bool reset = false}) async {
+    final key = cat.id;
+    final next = reset ? 1 : (_pages[key] ?? 0) + 1;
+    try {
+      final res = await _api.fetchTitlesPage(
+          type: cat.type, genre: cat.genre, anime: cat.anime, per: _perPage, page: next);
+      final base = reset ? const <Content>[] : (_items[key] ?? const <Content>[]);
+      _items[key] = [...base, ...res.items];
+      _pages[key] = next;
+      _more[key] = res.hasMore;
+    } catch (e) {
+      if (kDebugMode) debugPrint('catalog _loadCategory($key): $e');
+    }
+  }
+
+  Future<void> _loadSearch({bool reset = false}) async {
+    final q = _query;
+    if (q.isEmpty) return;
+    final next = reset ? 1 : (_pages[_searchKey] ?? 0) + 1;
+    try {
+      final res = await _api.searchPage(q, page: next);
+      if (q != _query) return; // query changed mid-flight — drop stale results
+      final base = reset ? const <Content>[] : (_items[_searchKey] ?? const <Content>[]);
+      _items[_searchKey] = [...base, ...res.items];
+      _pages[_searchKey] = next;
+      _more[_searchKey] = res.hasMore;
+    } catch (e) {
+      if (kDebugMode) debugPrint('catalog _loadSearch: $e');
+    } finally {
+      if (reset) filterLoading = false;
+      notifyListeners();
+    }
   }
 }
