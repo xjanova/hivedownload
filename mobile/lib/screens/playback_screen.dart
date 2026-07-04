@@ -254,8 +254,22 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     final ctrl = _controllers[index];
     if (ctrl == null || !ctrl.value.isInitialized) return;
     final ep = eps[index];
-    _db?.saveResume(
-        c.id, ep.id, ep.number, ctrl.value.position.inSeconds, ctrl.value.duration.inSeconds);
+    final pos = ctrl.value.position.inSeconds;
+    final dur = ctrl.value.duration.inSeconds;
+    _db?.saveResume(c.id, ep.id, ep.number, pos, dur);
+
+    // Mirror to the server so "continue watching" follows the member across
+    // devices. Only for a meaningful mid-episode position (matches the local
+    // guard that drops trivial/near-finished resumes), and only when signed in.
+    final meaningful = pos >= 5 && (dur <= 0 || pos <= dur - 10);
+    if (meaningful && _member?.isLoggedIn == true) {
+      _api?.saveProgress(
+        contentId: c.id,
+        episodeId: ep.id,
+        positionSeconds: pos,
+        durationSeconds: dur > 0 ? dur : null,
+      );
+    }
   }
 
   void _togglePlay() {
@@ -353,14 +367,14 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
               locked: _locked(index),
               episode: eps[index],
               unlockCost: _member?.unlockCost ?? 5,
-              fit: _fullscreen ? BoxFit.contain : BoxFit.cover,
+              fullscreen: _fullscreen,
               onUnlock: () => _unlockAt(index),
               onTapVideo: index == _current ? _togglePlay : null,
               onRetry: () => _ensure(index),
               l: l,
             ),
           ),
-          // top bar (back + title)
+          // top bar (back + title) + persistent NetWix logo, like the web player
           Positioned(
             top: 0,
             left: 0,
@@ -368,28 +382,41 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(8),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(c.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTheme.display(15,
-                                  weight: FontWeight.w700, color: Colors.white)),
-                          Text('${l.pick('ตอนที่', 'EP')} ${eps[_current].number} · ${_current + 1}/${eps.length}',
-                              style: AppTheme.body(11.5, color: Colors.white70)),
-                        ],
-                      ),
+                    Row(
+                      children: [
+                        _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(c.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTheme.display(15,
+                                      weight: FontWeight.w700, color: Colors.white)),
+                              Text('${l.pick('ตอนที่', 'EP')} ${eps[_current].number} · ${_current + 1}/${eps.length}',
+                                  style: AppTheme.body(11.5, color: Colors.white70)),
+                            ],
+                          ),
+                        ),
+                        // Fullscreen (landscape) is only meaningful for
+                        // horizontal titles; vertical short-dramas already fill
+                        // the portrait screen.
+                        if (!c.isVertical)
+                          _circleBtn(
+                            _fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                            _toggleFullscreen,
+                          ),
+                      ],
                     ),
-                    _circleBtn(
-                      _fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-                      _toggleFullscreen,
-                    ),
+                    // Channel logo sits just under the chrome, top-left, and
+                    // stays put in every orientation — mirrors the web watermark.
+                    _watermark(),
                   ],
                 ),
               ),
@@ -500,6 +527,23 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
           child: Icon(icon, color: Colors.white, size: 20),
         ),
       );
+
+  /// Always-on NetWix wordmark, top-left — the app twin of the web's
+  /// `partials/player-watermark`. Bigger over vertical clips (which fill the
+  /// frame) so it still reads as ours. Never intercepts taps.
+  Widget _watermark() => IgnorePointer(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 6, left: 2),
+          child: Opacity(
+            opacity: 0.9,
+            child: Image.asset(
+              'assets/brand/netwix-wordmark.png',
+              height: c.isVertical ? 30 : 22,
+              filterQuality: FilterQuality.medium,
+            ),
+          ),
+        ),
+      );
 }
 
 /// One full-screen page in the vertical feed.
@@ -512,7 +556,7 @@ class _EpisodePage extends StatelessWidget {
     required this.locked,
     required this.episode,
     required this.unlockCost,
-    required this.fit,
+    required this.fullscreen,
     required this.onUnlock,
     required this.onTapVideo,
     required this.onRetry,
@@ -526,15 +570,27 @@ class _EpisodePage extends StatelessWidget {
   final bool locked;
   final Episode episode;
   final int unlockCost;
-  final BoxFit fit;
+
+  /// Landscape-locked fullscreen mode (else the portrait TikTok feed).
+  final bool fullscreen;
   final VoidCallback onUnlock;
   final VoidCallback? onTapVideo;
   final VoidCallback onRetry;
   final L10n l;
 
+  /// Fill the portrait feed for vertical clips (cover), but show the WHOLE
+  /// frame for landscape movies/series so nothing is cropped — both in the
+  /// portrait feed and in landscape fullscreen (which letterboxes verticals).
+  BoxFit _fitFor(VideoPlayerController? ctrl) {
+    final landscape =
+        ctrl != null && ctrl.value.isInitialized && ctrl.value.aspectRatio > 1.05;
+    return (fullscreen || landscape) ? BoxFit.contain : BoxFit.cover;
+  }
+
   @override
   Widget build(BuildContext context) {
     final ctrl = controller;
+    final fit = _fitFor(ctrl);
 
     if (locked) {
       return _StatusPage(
