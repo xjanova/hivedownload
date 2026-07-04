@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/content.dart';
 import '../models/episode.dart';
+import '../models/member.dart';
 
 /// Client for the NetWix mobile API (`https://netwix.online/api/app/*`).
 ///
@@ -159,6 +160,150 @@ class NetwixApi {
     }
   }
 
+  // -------------------------------------------------- member library / social
+  //
+  // Backed by the real `/api/app/*` member endpoints (Library + Feedback
+  // controllers). All writes require a member token (set via [setToken]); the
+  // server 401s a guest, which surfaces here as a null return — callers gate on
+  // login first and treat null as "offline/declined, keep local state".
+
+  /// Per-title interaction state for the detail screen (liked / in-list / my
+  /// rating + counts). Token-only — returns null for guests or on failure.
+  Future<ContentState?> fetchContentState(int contentId) async {
+    try {
+      final d = _data(await _dio.get('/content/$contentId/state', options: _opts));
+      return d == null ? null : ContentState.fromJson(d);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix contentState($contentId): $e');
+      return null;
+    }
+  }
+
+  /// Public rating summary (avg + count) — works for guests too.
+  Future<RatingSummary?> fetchRatings(int contentId) async {
+    try {
+      final d = _data(await _dio.get('/content/$contentId/ratings', options: _opts));
+      return d == null ? null : RatingSummary.fromJson(d);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix ratings($contentId): $e');
+      return null;
+    }
+  }
+
+  /// Toggle like on a title. Returns the server-authoritative {liked, count}
+  /// or null (guest/offline).
+  Future<LikeResult?> toggleLike(int contentId) async {
+    try {
+      final d = _data(await _dio.post('/content/$contentId/like', options: _opts));
+      return d == null ? null : LikeResult.fromJson(d);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix toggleLike($contentId): $e');
+      return null;
+    }
+  }
+
+  /// Toggle a title in the member's list. Returns the new in-list flag or null.
+  Future<bool?> toggleList(int contentId) async {
+    try {
+      final d = _data(await _dio.post('/content/$contentId/list', options: _opts));
+      return d == null ? null : d['in_list'] == true;
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix toggleList($contentId): $e');
+      return null;
+    }
+  }
+
+  /// Rate a title 1–5. Returns {myRating, avg, count} or null.
+  Future<RatingResult?> postRating(int contentId, int stars) async {
+    try {
+      final d = _data(await _dio.post('/content/$contentId/rating',
+          data: {'stars': stars}, options: _opts));
+      return d == null ? null : RatingResult.fromJson(d);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix postRating($contentId): $e');
+      return null;
+    }
+  }
+
+  /// Comments for a title (public read; newest first). Empty list on failure.
+  Future<List<Comment>> fetchComments(int contentId) async {
+    try {
+      final d = _data(await _dio.get('/content/$contentId/comments', options: _opts));
+      final items = d?['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((m) => Comment.fromJson(m.cast<String, dynamic>()))
+          .toList();
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix comments($contentId): $e');
+      return const [];
+    }
+  }
+
+  /// Post a comment (token-only). Returns the created comment or null.
+  Future<Comment?> postComment(int contentId, String body) async {
+    try {
+      final d = _data(await _dio.post('/content/$contentId/comments',
+          data: {'body': body}, options: _opts));
+      final c = d?['comment'];
+      return c is Map ? Comment.fromJson(c.cast<String, dynamic>()) : null;
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix postComment($contentId): $e');
+      return null;
+    }
+  }
+
+  /// Mirror the on-device resume position to the server (token-only, best-effort
+  /// — a guest or a network blip just leaves the local SQLite resume as truth).
+  Future<void> saveProgress({
+    required int contentId,
+    int? episodeId,
+    required int positionSeconds,
+    int? durationSeconds,
+  }) async {
+    try {
+      await _dio.post('/progress',
+          data: {
+            'content_id': contentId,
+            'episode_id': ?episodeId,
+            'position_seconds': positionSeconds,
+            'duration_seconds': ?durationSeconds,
+          },
+          options: Options(
+              headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix saveProgress: $e');
+    }
+  }
+
+  /// The member's saved list (token-only). Empty on failure.
+  Future<List<Content>> fetchMyList() async {
+    try {
+      final d = _data(await _dio.get('/my-list', options: _opts));
+      return _contentList(d?['items']);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix myList: $e');
+      return const [];
+    }
+  }
+
+  /// Server-side continue-watching (token-only). Empty on failure.
+  Future<List<ProgressItem>> fetchProgress() async {
+    try {
+      final d = _data(await _dio.get('/progress', options: _opts));
+      final items = d?['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((m) => ProgressItem.fromJson(m.cast<String, dynamic>()))
+          .toList();
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix progress: $e');
+      return const [];
+    }
+  }
+
   List<Content> _contentList(dynamic v) {
     if (v is! List) return const [];
     return v.whereType<Map>().map((m) => Content.fromJson(m.cast<String, dynamic>())).toList();
@@ -212,5 +357,96 @@ class NetwixSource {
         ready: j['ready'] == true,
         kind: j['kind'] as String?,
         url: j['url'] as String?,
+      );
+}
+
+/// Per-title member interaction state (`GET /content/{id}/state`).
+class ContentState {
+  const ContentState({
+    this.liked = false,
+    this.inList = false,
+    this.myRating,
+    this.likesCount = 0,
+    this.ratingAvg = 0,
+    this.ratingCount = 0,
+    this.commentsCount = 0,
+  });
+
+  final bool liked;
+  final bool inList;
+  final int? myRating; // 1..5, null if the member hasn't rated
+  final int likesCount;
+  final double ratingAvg;
+  final int ratingCount;
+  final int commentsCount;
+
+  factory ContentState.fromJson(Map<String, dynamic> j) => ContentState(
+        liked: j['liked'] == true,
+        inList: j['in_list'] == true,
+        myRating: (j['my_rating'] as num?)?.toInt(),
+        likesCount: (j['likes_count'] as num?)?.toInt() ?? 0,
+        ratingAvg: (j['rating_avg'] as num?)?.toDouble() ?? 0,
+        ratingCount: (j['rating_count'] as num?)?.toInt() ?? 0,
+        commentsCount: (j['comments_count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Result of `POST /content/{id}/like`.
+class LikeResult {
+  const LikeResult({required this.liked, required this.likesCount});
+  final bool liked;
+  final int likesCount;
+
+  factory LikeResult.fromJson(Map<String, dynamic> j) => LikeResult(
+        liked: j['liked'] == true,
+        likesCount: (j['likes_count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Result of `POST /content/{id}/rating`.
+class RatingResult {
+  const RatingResult({required this.myRating, required this.avg, required this.count});
+  final int myRating;
+  final double avg;
+  final int count;
+
+  factory RatingResult.fromJson(Map<String, dynamic> j) => RatingResult(
+        myRating: (j['my_rating'] as num?)?.toInt() ?? 0,
+        avg: (j['avg'] as num?)?.toDouble() ?? 0,
+        count: (j['count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Public rating summary (`GET /content/{id}/ratings`).
+class RatingSummary {
+  const RatingSummary({required this.avg, required this.count});
+  final double avg;
+  final int count;
+
+  factory RatingSummary.fromJson(Map<String, dynamic> j) => RatingSummary(
+        avg: (j['avg'] as num?)?.toDouble() ?? 0,
+        count: (j['count'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// One server-side continue-watching row (`GET /progress`).
+class ProgressItem {
+  const ProgressItem({
+    required this.content,
+    this.episodeId,
+    this.percent = 0,
+    this.positionSeconds = 0,
+  });
+
+  final Content content;
+  final int? episodeId;
+  final int percent;
+  final int positionSeconds;
+
+  factory ProgressItem.fromJson(Map<String, dynamic> j) => ProgressItem(
+        content: Content.fromJson((j['content'] as Map).cast<String, dynamic>()),
+        episodeId: (j['episode_id'] as num?)?.toInt(),
+        percent: (j['percent'] as num?)?.toInt() ?? 0,
+        positionSeconds: (j['position_seconds'] as num?)?.toInt() ?? 0,
       );
 }

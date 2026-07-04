@@ -130,40 +130,7 @@ class NetwixClient {
     }
   }
 
-  // ------------------------------------------------------------- social
-
-  /// Returns {likes:int, liked:bool} or null.
-  Future<Map<String, dynamic>?> toggleLike(int seriesId) async {
-    try {
-      final r = await _dio.post<Map<String, dynamic>>('/api/series/$seriesId/like', options: _auth);
-      if (r.data?['success'] != true) return null;
-      return r.data!['data'] as Map<String, dynamic>?;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<List<Comment>?> comments(int seriesId) async {
-    try {
-      final r = await _dio.get<Map<String, dynamic>>('/api/series/$seriesId/comments', options: _auth);
-      if (r.data?['success'] != true) return null;
-      final list = (r.data!['data'] as Map)['comments'];
-      if (list is! List) return const [];
-      return list.whereType<Map<String, dynamic>>().map(Comment.fromJson).toList();
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<Comment?> postComment(int seriesId, String text) async {
-    try {
-      final r = await _dio.post<Map<String, dynamic>>('/api/series/$seriesId/comments',
-          data: {'text': text}, options: _auth);
-      if (r.data?['success'] != true) return null;
-      final c = (r.data!['data'] as Map)['comment'];
-      return c is Map<String, dynamic> ? Comment.fromJson(c) : null;
-    } catch (_) {
-      return null;
-    }
-  }
+  // Likes / comments / ratings now live on [NetwixApi] against the real
+  // `/api/app/content/{id}/*` member endpoints (this client's old
+  // `/api/series/*` routes never existed server-side). See NetwixApi.
 }

@@ -7,7 +7,6 @@ import '../l10n/l10n.dart';
 import '../models/content.dart';
 import '../models/episode.dart';
 import '../services/netwix_api.dart';
-import '../services/netwix_client.dart';
 import '../services/reward_config.dart';
 import '../widgets/comment_sheet.dart';
 import '../state/app_state.dart';
@@ -15,6 +14,7 @@ import '../state/member_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
+import '../widgets/login_sheet.dart';
 import '../widgets/poster_image.dart';
 import '../widgets/unlock_sheet.dart';
 import 'playback_screen.dart';
@@ -42,9 +42,14 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   bool _previewStarted = false;
   bool _muted = false;
 
-  // Social (netwix.online-backed; local-optimistic until live).
+  // Social (netwix.online-backed via /api/app/content/{id}/*). Optimistic UI,
+  // reconciled with the server-authoritative counts when the call returns.
   bool _liked = false;
   int _likes = 0;
+  bool _inList = false;
+  int? _myRating; // 1..5, null = not yet rated by this member
+  double _ratingAvg = 0;
+  int _ratingCount = 0;
 
   Content get c => _content;
 
@@ -55,19 +60,105 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     _load();
   }
 
+  /// Hydrate like / my-list / rating from the server. Members get their full
+  /// per-title state in one call; guests still see the public rating summary.
+  Future<void> _loadState() async {
+    final api = context.read<NetwixApi>();
+    if (context.read<MemberState>().isLoggedIn) {
+      final st = await api.fetchContentState(c.id);
+      if (!mounted) return;
+      if (st != null) {
+        setState(() {
+          _liked = st.liked;
+          _likes = st.likesCount;
+          _inList = st.inList;
+          _myRating = st.myRating;
+          _ratingAvg = st.ratingAvg;
+          _ratingCount = st.ratingCount;
+        });
+        return;
+      }
+    }
+    // Guest, or the member call failed: fall back to the public rating summary.
+    final r = await api.fetchRatings(c.id);
+    if (!mounted || r == null) return;
+    setState(() {
+      _ratingAvg = r.avg;
+      _ratingCount = r.count;
+    });
+  }
+
+  /// Prompt sign-in for a member-only action. Returns true once signed in.
+  Future<bool> _requireLogin() async {
+    final member = context.read<MemberState>();
+    if (member.isLoggedIn) return true;
+    await showLoginSheet(context);
+    if (!mounted) return false;
+    return context.read<MemberState>().isLoggedIn;
+  }
+
   Future<void> _toggleLike() async {
+    // Grab the app-lifetime providers up front so we don't touch `context`
+    // after the sign-in / network awaits.
+    final api = context.read<NetwixApi>();
+    final member = context.read<MemberState>();
+    if (!await _requireLogin()) return;
     final becameLiked = !_liked;
     setState(() {
       _liked = becameLiked;
-      _likes += becameLiked ? 1 : -1;
-      if (_likes < 0) _likes = 0;
+      _likes = (_likes + (becameLiked ? 1 : -1)).clamp(0, 1 << 31);
     });
-    await context.read<NetwixClient>().toggleLike(c.id); // graceful until live
+    final res = await api.toggleLike(c.id);
+    if (!mounted) return;
+    if (res != null) {
+      setState(() {
+        _liked = res.liked;
+        _likes = res.likesCount;
+      });
+    }
     // Coins only when turning a like ON (server + daily cap prevent farming).
-    if (becameLiked && mounted) {
-      final got = await context.read<MemberState>().awardLike();
+    if (becameLiked) {
+      final got = await member.awardLike();
       if (got > 0 && mounted) _coinToast(got);
     }
+  }
+
+  Future<void> _toggleList() async {
+    final api = context.read<NetwixApi>();
+    final l = context.read<AppState>().l;
+    if (!await _requireLogin()) return;
+    final target = !_inList;
+    setState(() => _inList = target);
+    final res = await api.toggleList(c.id);
+    if (!mounted) return;
+    // Reconcile with the server, or revert the optimistic flip on failure.
+    setState(() => _inList = res ?? !target);
+    _toast(_inList
+        ? l.pick('เพิ่มในรายการของฉันแล้ว', 'Added to My List')
+        : l.pick('เอาออกจากรายการแล้ว', 'Removed from My List'));
+  }
+
+  Future<void> _rate(int stars) async {
+    final api = context.read<NetwixApi>();
+    if (!await _requireLogin()) return;
+    final prev = _myRating;
+    setState(() => _myRating = stars);
+    final res = await api.postRating(c.id, stars);
+    if (!mounted) return;
+    if (res != null) {
+      setState(() {
+        _myRating = res.myRating;
+        _ratingAvg = res.avg;
+        _ratingCount = res.count;
+      });
+    } else {
+      setState(() => _myRating = prev); // revert on failure
+    }
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   Future<void> _share() async {
@@ -120,6 +211,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
         _error = null;
       });
       _maybeStartPreview();
+      _loadState();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -372,6 +464,8 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           Text(c.title, style: AppTheme.display(23, weight: FontWeight.w700)),
           const SizedBox(height: 6),
           Text(metaText, style: AppTheme.body(12.5, color: T.textMuted)),
+          const SizedBox(height: 10),
+          _ratingBar(l),
           const SizedBox(height: 12),
           _socialBar(l),
           if (c.synopsis.trim().isNotEmpty) ...[
@@ -380,6 +474,36 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           ],
         ],
       ),
+    );
+  }
+
+  /// Star rating: the member's own rating (fillable by tapping) plus the
+  /// community average + count beside it.
+  Widget _ratingBar(L10n l) {
+    final mine = _myRating ?? 0;
+    return Row(
+      children: [
+        for (int i = 1; i <= 5; i++)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _rate(i),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Icon(
+                i <= mine ? Icons.star_rounded : Icons.star_border_rounded,
+                size: 26,
+                color: i <= mine ? const Color(0xFFFFC24B) : T.textMuted,
+              ),
+            ),
+          ),
+        const SizedBox(width: 10),
+        Text(
+          _ratingCount > 0
+              ? '${_ratingAvg.toStringAsFixed(1)} · $_ratingCount ${l.pick('รีวิว', 'ratings')}'
+              : l.pick('ให้คะแนน', 'Rate this'),
+          style: AppTheme.body(12.5, color: T.textMuted),
+        ),
+      ],
     );
   }
 
@@ -401,16 +525,23 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
           ),
         );
 
-    return Row(children: [
-      btn(_liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-          _likes > 0 ? '$_likes' : l.pick('ถูกใจ', 'Like'), _toggleLike,
-          color: _liked ? const Color(0xFFF2705A) : null),
-      const SizedBox(width: 10),
-      btn(Icons.mode_comment_outlined, l.pick('คอมเมนต์', 'Comment'),
-          () => showCommentSheet(context, c.id)),
-      const SizedBox(width: 10),
-      btn(Icons.ios_share_rounded, l.pick('แชร์', 'Share'), _share),
-    ]);
+    // Wrap so the four actions reflow instead of overflowing on narrow phones.
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        btn(_liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+            _likes > 0 ? '$_likes' : l.pick('ถูกใจ', 'Like'), _toggleLike,
+            color: _liked ? const Color(0xFFF2705A) : null),
+        btn(_inList ? Icons.check_rounded : Icons.add_rounded,
+            _inList ? l.pick('ในรายการ', 'In List') : l.pick('รายการของฉัน', 'My List'),
+            _toggleList,
+            color: _inList ? T.accent : null),
+        btn(Icons.mode_comment_outlined, l.pick('คอมเมนต์', 'Comment'),
+            () => showCommentSheet(context, c.id)),
+        btn(Icons.ios_share_rounded, l.pick('แชร์', 'Share'), _share),
+      ],
+    );
   }
 
   Widget _episodeRow(L10n l, Episode ep, int index) {

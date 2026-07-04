@@ -3,15 +3,17 @@ import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
 import '../models/member.dart';
-import '../services/netwix_client.dart';
+import '../services/netwix_api.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/hex.dart';
 import '../theme/tokens.dart';
+import 'login_sheet.dart';
 
-/// Comments for a series (netwix.online-backed). Ready now; the list is empty
-/// until the backend is live, and posting echoes optimistically.
+/// Comments for a title (netwix.online-backed, `/api/app/content/{id}/*`).
+/// Reads are public; posting requires a signed-in member and echoes
+/// optimistically, then reconciles with the stored comment.
 void showCommentSheet(BuildContext context, int seriesId) {
   showModalBottomSheet<void>(
     context: context,
@@ -48,10 +50,10 @@ class _CommentSheetState extends State<_CommentSheet> {
   }
 
   Future<void> _load() async {
-    final list = await context.read<NetwixClient>().comments(widget.seriesId);
+    final list = await context.read<NetwixApi>().fetchComments(widget.seriesId);
     if (!mounted) return;
     setState(() {
-      _comments = list ?? const [];
+      _comments = list;
       _loading = false;
     });
   }
@@ -59,13 +61,22 @@ class _CommentSheetState extends State<_CommentSheet> {
   Future<void> _send() async {
     final text = _controller.text.trim();
     if (text.isEmpty || _sending) return;
+
+    // Posting requires a member — prompt sign-in rather than echo a comment
+    // the server will reject (401) and silently drop.
+    final member = context.read<MemberState>();
+    if (!member.isLoggedIn) {
+      await showLoginSheet(context);
+      if (!mounted || !context.read<MemberState>().isLoggedIn) return;
+    }
+
     setState(() => _sending = true);
-    final netwix = context.read<NetwixClient>();
+    final api = context.read<NetwixApi>();
     final me = context.read<MemberState>().member;
 
-    // optimistic echo
+    // optimistic echo (stable id so we can swap in the stored comment)
     final optimistic = Comment(
-      id: 'local-${_comments.length}',
+      id: 'local-${DateTime.now().microsecondsSinceEpoch}',
       author: me?.name ?? 'ฉัน',
       text: text,
       createdAt: DateTime.now(),
@@ -75,10 +86,17 @@ class _CommentSheetState extends State<_CommentSheet> {
       _controller.clear();
       _sending = false;
     });
-    await netwix.postComment(widget.seriesId, text); // graceful until live
+
+    final saved = await api.postComment(widget.seriesId, text);
+    if (!mounted) return;
+    if (saved != null) {
+      // Reconcile: replace the local echo with the server's stored comment.
+      setState(() {
+        _comments = [saved, ..._comments.where((x) => x.id != optimistic.id)];
+      });
+    }
 
     // Reward the comment (signed-in only, daily-capped server-side + locally).
-    if (!mounted) return;
     final got = await context.read<MemberState>().awardComment();
     if (mounted && got > 0) {
       final l = context.read<AppState>().l;
