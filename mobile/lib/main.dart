@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/intro_screen.dart';
@@ -8,6 +11,7 @@ import 'services/ad_service.dart';
 import 'services/auth_service.dart';
 import 'services/auto_updater.dart';
 import 'services/catalog_db.dart';
+import 'services/debug_reporter.dart';
 import 'services/netwix_api.dart';
 import 'services/netwix_client.dart';
 import 'services/settings_store.dart';
@@ -22,6 +26,27 @@ final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<v
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Diagnostics → netwix.online (/api/app/debug). Configure with the running
+  // version, then forward framework + async errors so on-device failures
+  // (sign-in especially) can be analysed server-side. Never carries secrets.
+  try {
+    final info = await PackageInfo.fromPlatform();
+    DebugReporter.instance.configure(appVersion: info.version);
+  } catch (_) {/* version is best-effort */}
+  final priorOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    priorOnError?.call(details);
+    unawaited(debugReport('flutter.error',
+        level: 'error',
+        message: details.exceptionAsString(),
+        context: {'library': details.library ?? ''}));
+  };
+  WidgetsBinding.instance.platformDispatcher.onError = (error, stack) {
+    unawaited(debugReport('uncaught', level: 'error', message: error.toString()));
+    return false;
+  };
+  unawaited(debugReport('app.launch'));
 
   // Content + playback both come from NetWix now (netwix.online/api/app/*).
   // NetWix resolves each episode's stream server-side on demand (a fresh signed

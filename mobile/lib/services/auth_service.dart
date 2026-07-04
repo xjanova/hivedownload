@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../models/member.dart';
+import 'debug_reporter.dart';
 import 'netwix_api.dart';
 
 enum AuthProvider { google, line, email }
@@ -39,7 +42,12 @@ class AuthService {
 
   Future<AuthResult> signIn(AuthProvider provider) async {
     final q = provider.query;
+    final p = q ?? 'email';
     final url = '${NetwixApi.origin}/mauth/start${q != null ? '?provider=$q' : ''}';
+
+    // Diagnostics carry only the provider + step + error text — never the
+    // one-time code or the bearer token.
+    unawaited(debugReport('auth.start', context: {'provider': p}));
 
     final String callback;
     try {
@@ -48,23 +56,34 @@ class AuthService {
         callbackUrlScheme: _callbackScheme,
       );
     } catch (e) {
-      // The plugin throws on user-cancel (tab closed); surface it cleanly.
+      // The plugin throws on user-cancel (tab closed) AND on a real failure —
+      // we can't tell them apart, so report the raw error for analysis.
       if (kDebugMode) debugPrint('web auth cancelled/failed: $e');
+      unawaited(debugReport('auth.webauth_fail',
+          level: 'warn', message: e.toString(), context: {'provider': p}));
       throw AuthCancelled();
     }
 
     final code = Uri.tryParse(callback)?.queryParameters['code'];
     if (code == null || code.isEmpty) {
+      unawaited(debugReport('auth.no_code',
+          level: 'error',
+          message: 'callback had no code',
+          context: {'provider': p, 'callback_len': callback.length}));
       throw Exception('ไม่ได้รับรหัสยืนยันจากการเข้าสู่ระบบ');
     }
+    unawaited(debugReport('auth.callback', context: {'provider': p, 'has_code': true}));
 
     final data = await _api.exchangeCode(code);
     final token = data?['token'] as String?;
     final user = data?['user'];
     if (token == null || user is! Map) {
+      unawaited(debugReport('auth.exchange_fail',
+          level: 'error', context: {'provider': p, 'got_data': data != null}));
       throw Exception('แลกรหัสเข้าสู่ระบบไม่สำเร็จ');
     }
 
+    unawaited(debugReport('auth.success', context: {'provider': p}));
     return AuthResult(Member.fromNetwixUser(user.cast<String, dynamic>(), token: token));
   }
 }
