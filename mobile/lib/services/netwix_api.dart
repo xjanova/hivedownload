@@ -152,6 +152,16 @@ class NetwixApi {
     }
   }
 
+  /// Count a watch on the server (deduped server-side). Fire-and-forget.
+  Future<void> recordView(int contentId) async {
+    try {
+      await _dio.post('/content/$contentId/view',
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix recordView($contentId): $e');
+    }
+  }
+
   // ------------------------------------------------------------- member auth
 
   /// Exchange the one-time login code (from the netwix:// deep link) for a
@@ -201,6 +211,75 @@ class NetwixApi {
           options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
     } catch (e) {
       if (kDebugMode) debugPrint('netwix logoutToken: $e');
+    }
+  }
+
+  // -------------------------------------------------- membership / coins
+  //
+  // The server (App\Services\Membership) is authoritative for coins, Pro, and
+  // the referral promo. `state` maps below carry:
+  //   {is_pro, plan, pro_until, coins, referral_code, referred,
+  //    referrals_count, daily_checkin_available}
+
+  /// The member's Pro / coins / referral state (token-only). Null on failure.
+  Future<Map<String, dynamic>?> fetchMembership() async {
+    try {
+      return _data(await _dio.get('/membership', options: _opts));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix membership: $e');
+      return null;
+    }
+  }
+
+  /// Earn coins for an activity (kind: daily | watch). Returns whether it
+  /// counted (false = already done / capped) + the fresh state.
+  Future<({bool ok, Map<String, dynamic>? state})> earnCoins(String kind) async {
+    try {
+      final r = await _dio.post('/coins/earn',
+          data: {'kind': kind},
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+      final b = r.data;
+      final ok = b is Map && b['success'] == true;
+      final state = (b is Map && b['data'] is Map) ? (b['data'] as Map).cast<String, dynamic>() : null;
+      return (ok: ok, state: state);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix earnCoins($kind): $e');
+      return (ok: false, state: null);
+    }
+  }
+
+  /// Spend coins to unlock a locked episode. Returns ok + the fresh state.
+  Future<({bool ok, Map<String, dynamic>? state})> unlockEpisodeApp(int episodeId) async {
+    try {
+      final r = await _dio.post('/episodes/$episodeId/unlock',
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+      final b = r.data;
+      final ok = b is Map && b['success'] == true;
+      final data = (b is Map && b['data'] is Map) ? (b['data'] as Map) : null;
+      final state =
+          (data?['membership'] is Map) ? (data!['membership'] as Map).cast<String, dynamic>() : null;
+      return (ok: ok, state: state);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix unlock($episodeId): $e');
+      return (ok: false, state: null);
+    }
+  }
+
+  /// Redeem a friend's referral code (grants the promo both sides). Returns
+  /// ok/error + the fresh state.
+  Future<({bool ok, String? error, Map<String, dynamic>? state})> redeemReferral(String code) async {
+    try {
+      final r = await _dio.post('/referral/redeem',
+          data: {'code': code},
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+      final b = r.data;
+      final ok = b is Map && b['success'] == true;
+      final error = (b is Map ? b['error'] : null) as String?;
+      final state = (b is Map && b['data'] is Map) ? (b['data'] as Map).cast<String, dynamic>() : null;
+      return (ok: ok, error: error, state: state);
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix redeem: $e');
+      return (ok: false, error: null, state: null);
     }
   }
 

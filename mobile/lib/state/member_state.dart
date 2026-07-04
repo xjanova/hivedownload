@@ -7,22 +7,24 @@ import '../models/referral.dart';
 import '../services/account_store.dart';
 import '../services/auth_service.dart';
 import '../services/netwix_api.dart';
-import '../services/netwix_client.dart';
 import '../services/reward_config.dart';
 
-/// The app-facing account/coins state. Auth + identity come from NetWix
-/// (bearer token on [NetwixApi]); coins/activities stay local-first for now.
+/// The app-facing account/coins state. Identity + the coin economy come from
+/// NetWix (`/api/app/*`, bearer token): when signed in, coins / Pro / referral
+/// are **server-authoritative** — daily check-in, watch-reward and episode
+/// unlocks post to the server and the balance is read back from it. Guests fall
+/// back to the local store.
 class MemberState extends ChangeNotifier {
-  MemberState(this._store, this._netwix, this._api, this._auth);
+  MemberState(this._store, this._api, this._auth);
 
   final AccountStore _store;
-  final NetwixClient _netwix;
   final NetwixApi _api;
   final AuthService _auth;
 
   Member? _member;
   int _coins = 0;
   ReferralStatus? _referral;
+  bool _dailyAvailable = true; // server: daily_checkin_available
 
   Member? get member => _member;
   bool get isLoggedIn => _member?.isLoggedIn ?? false;
@@ -47,45 +49,61 @@ class MemberState extends ChangeNotifier {
   DateTime? get proUntil => _referral?.proUntil ?? _member?.proUntil;
 
   /// The link to share when inviting friends.
-  String get shareLink =>
-      _referral?.link ?? 'https://netwix.online/r/$referralCode';
+  String get shareLink => _referral?.link ?? 'https://netwix.online/r/$referralCode';
 
   void init() {
     _member = _store.member;
     _coins = _store.coins;
     final token = _member?.token;
-    _netwix.setToken(token);
     _api.setToken(token);
     notifyListeners();
-    if (token != null) {
-      unawaited(_refreshMe());
-      unawaited(refreshReferral());
-    }
+    if (token != null) unawaited(refreshMembership());
   }
 
-  /// Re-pull the profile from the server (name/avatar/plan may have changed).
-  Future<void> _refreshMe() async {
+  /// Pull the member's server truth — profile, coins, Pro, referral. Keeps the
+  /// cached values on a transient failure so the UI never flickers.
+  Future<void> refreshMembership() async {
+    if (!isLoggedIn) return;
     final me = await _api.fetchMe();
-    if (me == null) return; // transient/401 — keep the cached member
+    if (me == null) return; // 401 / offline — keep cache
     _member = Member.fromNetwixUser(me, token: _member?.token);
-    await _store.setMember(_member);
+    unawaited(_store.setMember(_member));
+    _applyState(me['membership'] ?? me);
     notifyListeners();
   }
 
-  /// Pull referral/promo progress (qualified friends, Pro grant) from the
-  /// server. Keeps the cached value on transient failure so the UI never
-  /// flickers back to 0. The Pro perk is granted server-side, not here.
-  Future<void> refreshReferral() async {
-    if (!isLoggedIn) {
-      _referral = null;
-      notifyListeners();
-      return;
+  /// Back-compat alias (referral now comes from the membership state).
+  Future<void> refreshReferral() => refreshMembership();
+
+  /// Apply a server membership `state` map to local coins / Pro / referral.
+  void _applyState(dynamic raw) {
+    if (raw is! Map) return;
+    final s = raw.cast<String, dynamic>();
+
+    _coins = (s['coins'] as num?)?.toInt() ?? _coins;
+    unawaited(_store.setCoins(_coins));
+
+    if (s.containsKey('daily_checkin_available')) {
+      _dailyAvailable = s['daily_checkin_available'] != false;
     }
-    final r = await _netwix.fetchReferral();
-    if (r == null) return; // backend not answering — keep what we have
-    _referral = r;
-    notifyListeners();
+
+    final code = (s['referral_code'] ?? _referral?.code ?? _member?.referralCode ?? '').toString();
+    _referral = ReferralStatus(
+      code: code,
+      qualified: (s['referrals_count'] as num?)?.toInt() ?? 0,
+      target: RewardConfig.referralTarget,
+      rewardMonths: RewardConfig.referralRewardMonths,
+      proUntil: _dateFrom(s['pro_until']),
+    );
+
+    if (_member != null) {
+      _member = _member!.copyWith(isPro: s['is_pro'] == true, proUntil: _dateFrom(s['pro_until']));
+      unawaited(_store.setMember(_member));
+    }
   }
+
+  static DateTime? _dateFrom(dynamic v) =>
+      (v == null || '$v'.isEmpty) ? null : DateTime.tryParse('$v')?.toLocal();
 
   // -------------------------------------------------------------- auth
 
@@ -94,16 +112,11 @@ class MemberState extends ChangeNotifier {
     final res = await _auth.signIn(provider);
     _member = res.member;
     await _store.setMember(res.member);
-    _netwix.setToken(res.member.token);
     _api.setToken(res.member.token);
-
-    // ล็อกอินครั้งแรกด้วยบัญชี → +10 เหรียญ (ครั้งเดียวตลอดกาล)
-    if (!_store.firstLoginBonusDone) {
-      await _addCoins(RewardConfig.firstLoginBonus, 'first_login');
-      await _store.setFirstLoginBonusDone();
-    }
+    // Server is the source of truth for coins/Pro/referral (incl. the signup
+    // bonus + any referral grant applied at sign-up).
+    await refreshMembership();
     notifyListeners();
-    unawaited(refreshReferral());
     return res;
   }
 
@@ -111,23 +124,31 @@ class MemberState extends ChangeNotifier {
     await _api.logoutToken(); // best-effort server revoke
     _member = null;
     _referral = null;
-    _netwix.setToken(null);
     _api.setToken(null);
     await _store.setMember(null);
     notifyListeners();
   }
 
-  // ------------------------------------------------------------- coins
-
-  Future<void> _addCoins(int delta, String reason) async {
-    _coins = (_coins + delta).clamp(0, 1 << 31);
-    await _store.setCoins(_coins);
-    unawaited(_netwix.earn(reason)); // server reconciles when live
+  /// Redeem a friend's referral code → both sides get the promo (server-side).
+  /// Returns null on success, or a localized error message.
+  Future<String?> redeemReferral(String code) async {
+    if (!isLoggedIn) return 'ต้องเข้าสู่ระบบก่อน';
+    final res = await _api.redeemReferral(code.trim());
+    if (res.state != null) _applyState(res.state);
+    notifyListeners();
+    return res.ok ? null : (res.error ?? 'ใช้โค้ดไม่สำเร็จ');
   }
 
-  /// Public earn (referral bonuses, etc.).
+  // ------------------------------------------------------------- coins
+
+  Future<void> _addCoins(int delta) async {
+    _coins = (_coins + delta).clamp(0, 1 << 31);
+    await _store.setCoins(_coins);
+  }
+
+  /// Public earn (local, guest-side).
   Future<void> earn(int delta, String reason) async {
-    await _addCoins(delta, reason);
+    await _addCoins(delta);
     notifyListeners();
   }
 
@@ -142,7 +163,6 @@ class MemberState extends ChangeNotifier {
 
   /// Free for the first [freeEpisodes] (by position), for Pro members, or if
   /// unlocked. When the lock is disabled, every episode is free.
-  /// [episodeId] is the stable NetWix episode id used as the unlock key.
   bool isEpisodeUnlocked(int contentId, int episodeId, int index, {required bool isPro}) {
     if (!RewardConfig.gatingEnabled) return true;
     if (isPro) return true;
@@ -152,12 +172,25 @@ class MemberState extends ChangeNotifier {
 
   bool isUnlocked(int contentId, int episodeId) => _store.isUnlocked(contentId, episodeId);
 
-  /// Spends coins to unlock one episode. Returns false if not enough coins.
+  /// Unlock one episode. Signed in → the server spends coins and records the
+  /// unlock (persists across devices); guest → local coins only.
   Future<bool> unlockEpisode(int contentId, int episodeId) async {
     if (_store.isUnlocked(contentId, episodeId)) return true;
+
+    if (isLoggedIn) {
+      final res = await _api.unlockEpisodeApp(episodeId);
+      if (res.state != null) _applyState(res.state);
+      if (!res.ok) {
+        notifyListeners();
+        return false;
+      }
+      await _store.addUnlock(contentId, episodeId); // local cache mirror
+      notifyListeners();
+      return true;
+    }
+
     if (!await _spend(RewardConfig.unlockCost)) return false;
     await _store.addUnlock(contentId, episodeId);
-    unawaited(_netwix.unlock(contentId, episodeId));
     notifyListeners();
     return true;
   }
@@ -171,13 +204,24 @@ class MemberState extends ChangeNotifier {
     return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
   }
 
-  bool get checkedInToday => _store.activityCount(_today, 'checkin') > 0;
+  bool get checkedInToday =>
+      isLoggedIn ? !_dailyAvailable : _store.activityCount(_today, 'checkin') > 0;
 
-  /// Daily check-in → coins (once per day). Returns coins granted (0 if already).
+  /// Daily check-in → coins (once per day). Signed in → server; guest → local.
+  /// Returns coins granted (0 if already done today).
   Future<int> dailyCheckIn() async {
+    if (isLoggedIn) {
+      final before = _coins;
+      final res = await _api.earnCoins('daily');
+      if (res.state != null) _applyState(res.state);
+      notifyListeners();
+      if (!res.ok) return 0;
+      final earned = _coins - before;
+      return earned > 0 ? earned : RewardConfig.dailyCheckin;
+    }
     if (checkedInToday) return 0;
     await _store.bumpActivity(_today, 'checkin');
-    await _addCoins(RewardConfig.dailyCheckin, 'daily_checkin');
+    await _addCoins(RewardConfig.dailyCheckin);
     notifyListeners();
     return RewardConfig.dailyCheckin;
   }
@@ -185,26 +229,36 @@ class MemberState extends ChangeNotifier {
   int get rewardWatchesToday => _store.activityCount(_today, 'reward');
   bool get canRewardWatch => rewardWatchesToday < RewardConfig.rewardWatchDailyMax;
 
-  /// Grants coins for finishing a reward clip (respects the daily cap).
+  /// Grants coins for finishing a reward clip. Signed in → server (which
+  /// enforces the daily cap); guest → local.
   Future<int> claimRewardWatch() async {
+    if (isLoggedIn) {
+      final before = _coins;
+      final res = await _api.earnCoins('watch');
+      if (res.state != null) _applyState(res.state);
+      await _store.bumpActivity(_today, 'reward'); // local cap hint for the UI
+      notifyListeners();
+      if (!res.ok) return 0;
+      final earned = _coins - before;
+      return earned > 0 ? earned : RewardConfig.rewardWatchCoins;
+    }
     if (!canRewardWatch) return 0;
     await _store.bumpActivity(_today, 'reward');
-    await _addCoins(RewardConfig.rewardWatchCoins, 'reward_watch');
+    await _addCoins(RewardConfig.rewardWatchCoins);
     notifyListeners();
     return RewardConfig.rewardWatchCoins;
   }
 
   // -------------------------------------------------- social → coins
-  // Small coin nudges for like/comment/share. Signed-in only, daily-capped so
-  // repeatedly toggling a like can't farm coins. The server is authoritative
-  // for the real balance ([_addCoins] fires `earn(reason)`); these are the
-  // local, best-effort mirror so the reward shows instantly.
+  // Small local coin nudges for like/comment/share (signed-in only, daily-
+  // capped). The server has no earn kind for these, so they're a best-effort
+  // local mirror — the balance snaps to server truth on the next refresh.
 
   Future<int> _awardCapped(String key, int coins, int dailyMax) async {
     if (!isLoggedIn) return 0;
     if (_store.activityCount(_today, key) >= dailyMax) return 0;
     await _store.bumpActivity(_today, key);
-    await _addCoins(coins, key);
+    await _addCoins(coins);
     notifyListeners();
     return coins;
   }

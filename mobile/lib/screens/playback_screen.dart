@@ -93,6 +93,8 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
       _db = context.read<CatalogDb>();
       _member = context.read<MemberState>();
       _isPro = context.read<AppState>().isPro || _member!.isPro;
+      // Count the watch once per opened title (deduped server-side).
+      unawaited(_api!.recordView(c.id));
       _ensure(_current);
       _ensure(_current + 1);
       _ensure(_current - 1);

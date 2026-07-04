@@ -13,7 +13,6 @@ import 'services/auto_updater.dart';
 import 'services/catalog_db.dart';
 import 'services/debug_reporter.dart';
 import 'services/netwix_api.dart';
-import 'services/netwix_client.dart';
 import 'services/settings_store.dart';
 import 'state/app_state.dart';
 import 'state/catalog_state.dart';
@@ -66,11 +65,9 @@ Future<void> main() async {
   final api = NetwixApi();
   final db = await CatalogDb.open();
   final accountStore = await AccountStore.load();
-  final netwix = NetwixClient();
-  final memberState = MemberState(accountStore, netwix, api, AuthService(api))..init();
+  final memberState = MemberState(accountStore, api, AuthService(api))..init();
 
-  runApp(HiveApp(
-      settings: settings, api: api, db: db, netwix: netwix, memberState: memberState));
+  runApp(HiveApp(settings: settings, api: api, db: db, memberState: memberState));
 }
 
 class HiveApp extends StatelessWidget {
@@ -79,14 +76,12 @@ class HiveApp extends StatelessWidget {
     required this.settings,
     required this.api,
     required this.db,
-    required this.netwix,
     required this.memberState,
   });
 
   final SettingsStore settings;
   final NetwixApi api;
   final CatalogDb db;
-  final NetwixClient netwix;
   final MemberState memberState;
 
   @override
@@ -101,7 +96,6 @@ class HiveApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AdService()..start(placements: const ['player', 'home'])),
         Provider<NetwixApi>.value(value: api),
         Provider<CatalogDb>(create: (_) => db),
-        Provider<NetwixClient>.value(value: netwix),
         Provider<AutoUpdater>(create: (_) => AutoUpdater()),
       ],
       child: Consumer<AppState>(
