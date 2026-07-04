@@ -168,6 +168,22 @@ class NetwixApi {
     }
   }
 
+  /// Which social sign-in providers the server has configured, so the app hides
+  /// the ones without credentials. Defaults to LINE-only on failure (its creds
+  /// are known-good) so a network blip never shows a dead Google button.
+  Future<Map<String, bool>> fetchAuthProviders() async {
+    try {
+      final d = _data(await _dio.get('/auth/providers', options: _opts));
+      return {
+        'google': d?['google'] == true,
+        'line': d?['line'] == true,
+      };
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix authProviders: $e');
+      return const {'google': false, 'line': true};
+    }
+  }
+
   /// Current member + default profile (requires a token via [setToken]).
   Future<Map<String, dynamic>?> fetchMe() async {
     try {

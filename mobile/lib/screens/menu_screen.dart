@@ -332,21 +332,36 @@ class MenuScreen extends StatelessWidget {
         SnackBar(content: Text(l.pick('จะมาในเวอร์ชันถัดไป', 'Coming soon'))),
       );
 
-  void _about(BuildContext context, L10n l) => showAboutDialog(
+  // Custom About dialog — deliberately NOT showAboutDialog, which injects a
+  // "View licenses" button (the open-source license page) we don't want users
+  // to see.
+  void _about(BuildContext context, L10n l) => showDialog<void>(
         context: context,
-        applicationName: 'NetWix',
-        applicationVersion: l.pick('ดูฟรี · สตรีมมิ่ง', 'Free streaming'),
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-              l.pick(
-                'สำหรับการรับชมส่วนตัวเท่านั้น ทุกเรื่องดูฟรี · Pro 129฿ เพื่อรับชมแบบไม่มีโฆษณา',
-                'For personal viewing only. Everything is free · Pro 129฿ for ad-free.',
+        builder: (ctx) => AlertDialog(
+          backgroundColor: T.screen,
+          title: Text('NetWix', style: AppTheme.display(18, weight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l.pick('ดูฟรี · สตรีมมิ่ง', 'Free streaming'),
+                  style: AppTheme.body(12.5, color: T.textMuted)),
+              const SizedBox(height: 12),
+              Text(
+                l.pick(
+                  'สำหรับการรับชมส่วนตัวเท่านั้น ทุกเรื่องดูฟรี · Pro 129฿ เพื่อรับชมแบบไม่มีโฆษณา',
+                  'For personal viewing only. Everything is free · Pro 129฿ for ad-free.',
+                ),
+                style: AppTheme.body(12.5, color: T.textSecondary),
               ),
-              style: AppTheme.body(12.5, color: T.textMuted),
-            ),
+            ],
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(l.pick('ปิด', 'Close'), style: AppTheme.body(13, color: T.accent)),
+            ),
+          ],
+        ),
       );
 }
