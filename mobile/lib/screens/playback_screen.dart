@@ -18,6 +18,7 @@ import '../widgets/unlock_sheet.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../widgets/ad_banner.dart';
+import '../widgets/poster_image.dart';
 
 /// 08 — Playback · เล่นซีรีส์.
 ///
@@ -320,57 +321,110 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
 
   void _openEpisodeSheet() {
     final l = context.read<AppState>().l;
+    // Vertical short-dramas get portrait clip covers; horizontal titles get
+    // wider thumbnails. Either way each cell shows the episode's own artwork.
+    final vertical = c.isVertical;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: T.screen,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(l.bi('ตอนทั้งหมด', 'Episodes'),
-                  style: AppTheme.display(16, weight: FontWeight.w700)),
-            ),
-            Flexible(
-              child: GridView.builder(
-                shrinkWrap: true,
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 5, mainAxisSpacing: 10, crossAxisSpacing: 10, childAspectRatio: 1.4),
-                itemCount: eps.length,
-                itemBuilder: (_, i) {
-                  final active = i == _current;
-                  final ep = eps[i];
-                  return GestureDetector(
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      _pageController.jumpToPage(i);
-                    },
-                    child: Container(
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        gradient: active ? T.accentGradient : null,
-                        color: active ? null : const Color(0x14FFFFFF),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: active ? Colors.transparent : T.hairline),
-                      ),
-                      child: Text('${ep.number}',
-                          style: AppTheme.display(14,
-                              weight: FontWeight.w700,
-                              color: active
-                                  ? T.onAccent
-                                  : ep.isUnavailable
-                                      ? T.textFaint
-                                      : T.textSecondary)),
-                    ),
-                  );
-                },
+      builder: (ctx) => SizedBox(
+        height: MediaQuery.of(ctx).size.height * 0.72,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Text(l.bi('ตอนทั้งหมด', 'Episodes'),
+                        style: AppTheme.display(16, weight: FontWeight.w700)),
+                    const Spacer(),
+                    Text('${eps.length} ${l.pick('ตอน', 'eps')}',
+                        style: AppTheme.body(12.5, color: T.textMuted)),
+                  ],
+                ),
               ),
-            ),
-          ],
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: vertical ? 4 : 3,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: vertical ? 0.62 : 1.45,
+                  ),
+                  itemCount: eps.length,
+                  itemBuilder: (_, i) {
+                    final active = i == _current;
+                    final ep = eps[i];
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _pageController.jumpToPage(i);
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            // The clip cover — episode thumbnail, falling back to
+                            // the title artwork.
+                            PosterImage(
+                              url: ep.thumbnailUrl ?? c.displayImageUrl,
+                              seed: c.id + ep.number,
+                              radius: 10,
+                            ),
+                            // Scrim so the label stays readable over any artwork.
+                            const DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [Color(0x00000000), Color(0xD9000000)],
+                                  stops: [0.45, 1.0],
+                                ),
+                              ),
+                            ),
+                            if (ep.isUnavailable)
+                              Container(
+                                color: const Color(0x99000000),
+                                alignment: Alignment.center,
+                                child: const Icon(Icons.block_rounded, color: Colors.white70, size: 20),
+                              ),
+                            Positioned(
+                              left: 7,
+                              bottom: 6,
+                              child: Text('${l.pick('ตอน', 'EP')} ${ep.number}',
+                                  style: AppTheme.display(12, weight: FontWeight.w700, color: Colors.white)),
+                            ),
+                            if (active) ...[
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: T.accent, width: 2),
+                                  ),
+                                ),
+                              ),
+                              const Positioned(
+                                right: 6,
+                                top: 6,
+                                child: Icon(Icons.play_circle_fill_rounded, color: T.accent, size: 18),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
