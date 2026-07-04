@@ -97,12 +97,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
             _errorBox(l, catalog)
           else ...[
             // When a category chip is active (e.g. อนิเมะ), lead with that set.
-            if (catalog.filter != CatalogFilter.all)
+            if (!catalog.current.isAll)
               _rail(
                 l,
-                l.isTh ? catalog.filter.th : catalog.filter.en,
+                catalog.current.label(l.isTh),
                 catalog.visible,
-                badge: catalog.filter == CatalogFilter.vertical
+                badge: catalog.current.id == 'vertical'
                     ? const Pill(text: 'ดูฟรี', filled: true)
                     : null,
                 loading: catalog.filterLoading,
@@ -111,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
             for (final r in catalog.rails)
               if (r.items.isNotEmpty) _rail(l, r.title, r.items),
             // Fallback when the backend sent no rails (offline / older API).
-            if (catalog.rails.isEmpty && catalog.filter == CatalogFilter.all)
+            if (catalog.rails.isEmpty && catalog.current.isAll)
               _rail(l, l.bi('ยอดนิยม', 'Popular'), catalog.featured),
           ],
         ],
@@ -164,21 +164,21 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          for (final f in CatalogFilter.values)
+          for (final cat in catalog.categories)
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: _chip(catalog, f),
+              child: _chip(catalog, cat),
             ),
         ],
       ),
     );
   }
 
-  Widget _chip(CatalogState catalog, CatalogFilter f) {
-    final active = catalog.filter == f;
-    final label = context.read<AppState>().l.isTh ? f.th : f.en;
+  Widget _chip(CatalogState catalog, CatalogCategory cat) {
+    final active = catalog.current.id == cat.id;
+    final label = context.read<AppState>().l.isTh ? cat.th : cat.en;
     return GestureDetector(
-      onTap: () => catalog.setFilter(f),
+      onTap: () => catalog.setCategory(cat),
       child: Container(
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 16),

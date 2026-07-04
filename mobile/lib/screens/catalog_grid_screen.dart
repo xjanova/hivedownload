@@ -97,10 +97,10 @@ class _CatalogGridScreenState extends State<CatalogGridScreen> {
                 child: ListView(
                   scrollDirection: Axis.horizontal,
                   children: [
-                    for (final f in CatalogFilter.values)
+                    for (final cat in catalog.categories)
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
-                        child: _chip(catalog, f, l.isTh ? f.th : f.en),
+                        child: _chip(catalog, cat, cat.label(l.isTh)),
                       ),
                   ],
                 ),
@@ -133,10 +133,10 @@ class _CatalogGridScreenState extends State<CatalogGridScreen> {
     );
   }
 
-  Widget _chip(CatalogState catalog, CatalogFilter f, String label) {
-    final active = catalog.filter == f;
+  Widget _chip(CatalogState catalog, CatalogCategory cat, String label) {
+    final active = catalog.current.id == cat.id;
     return GestureDetector(
-      onTap: () => catalog.setFilter(f),
+      onTap: () => catalog.setCategory(cat),
       child: Container(
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 16),

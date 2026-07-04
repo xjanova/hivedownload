@@ -6,33 +6,41 @@ import '../models/content.dart';
 import '../services/catalog_db.dart';
 import '../services/netwix_api.dart';
 
-/// Catalog filter chips → NetWix content types. `anime` is a server-side
-/// category (its items keep type movie/series but come from the anime source),
-/// so selecting it fetches `/titles?type=anime` rather than filtering locally.
-enum CatalogFilter { all, series, movie, vertical, anime }
+/// An Explore/Home category chip. Backed by a media [type] (series|movie|
+/// vertical), a [genre] slug, the [anime] bucket, or 'all'. The five base chips
+/// are fixed; genre chips are appended from the server taxonomy (`/genres`) so
+/// the app's categories always match the web.
+class CatalogCategory {
+  const CatalogCategory({
+    required this.id,
+    required this.th,
+    required this.en,
+    this.type,
+    this.genre,
+    this.anime = false,
+  });
 
-extension CatalogFilterX on CatalogFilter {
-  String get th => switch (this) {
-        CatalogFilter.all => 'ทั้งหมด',
-        CatalogFilter.series => 'ซีรีส์',
-        CatalogFilter.movie => 'ภาพยนตร์',
-        CatalogFilter.vertical => 'แนวตั้ง',
-        CatalogFilter.anime => 'อนิเมะ',
-      };
-  String get en => switch (this) {
-        CatalogFilter.all => 'All',
-        CatalogFilter.series => 'Series',
-        CatalogFilter.movie => 'Movies',
-        CatalogFilter.vertical => 'Vertical',
-        CatalogFilter.anime => 'Anime',
-      };
-  String? get type => switch (this) {
-        CatalogFilter.all => null,
-        CatalogFilter.series => 'series',
-        CatalogFilter.movie => 'movie',
-        CatalogFilter.vertical => 'vertical',
-        CatalogFilter.anime => 'anime',
-      };
+  /// 'all' | 'series' | 'movie' | 'vertical' | 'anime' | 'g:{slug}'
+  final String id;
+  final String th;
+  final String en;
+  final String? type; // media type
+  final String? genre; // genre slug
+  final bool anime; // anime/cartoon bucket
+
+  bool get isAll => id == 'all';
+  String label(bool isTh) => isTh ? th : en;
+
+  static const all = CatalogCategory(id: 'all', th: 'ทั้งหมด', en: 'All');
+
+  /// Fixed chips shown before the server genre list.
+  static const base = <CatalogCategory>[
+    all,
+    CatalogCategory(id: 'series', th: 'ซีรีส์', en: 'Series', type: 'series'),
+    CatalogCategory(id: 'movie', th: 'ภาพยนตร์', en: 'Movies', type: 'movie'),
+    CatalogCategory(id: 'vertical', th: 'แนวตั้ง', en: 'Vertical', type: 'vertical'),
+    CatalogCategory(id: 'anime', th: 'อนิเมะ', en: 'Anime', anime: true),
+  ];
 }
 
 /// Catalog sourced entirely from NetWix (`/api/app/*`). Cache-first: paints the
@@ -45,29 +53,35 @@ class CatalogState extends ChangeNotifier {
   List<Content> _all = [];
   Content? _hero;
   List<NetwixRail> _rails = const [];
-  // Server-fetched results for each non-'all' category (anime/movie/…), cached
-  // so re-tapping a chip doesn't refetch.
-  final Map<CatalogFilter, List<Content>> _byFilter = {};
+  List<CatalogCategory> _genreCats = const [];
+  // Server-fetched results per non-'all' category, cached by category id so
+  // re-tapping a chip doesn't refetch.
+  final Map<String, List<Content>> _byId = {};
   bool loading = false;
   bool filterLoading = false;
   String? error;
   String _query = '';
-  CatalogFilter filter = CatalogFilter.all;
+  CatalogCategory _current = CatalogCategory.all;
 
   bool get isEmpty => _all.isEmpty;
   int get total => _all.length;
   String get query => _query;
   Content? get hero => _hero;
 
-  /// The web's curated home rails (trending + genre rails incl. anime).
+  /// The web's curated home rails (trending + genre rails incl. an anime rail).
   List<NetwixRail> get rails => _rails;
+
+  /// Base chips + the server genre taxonomy (anime is already the base 'anime'
+  /// chip, so the genre-anime entries are dropped here to avoid duplicates).
+  List<CatalogCategory> get categories => [...CatalogCategory.base, ..._genreCats];
+  CatalogCategory get current => _current;
 
   Future<void> load({bool force = false}) async {
     if (loading) return;
     if (_all.isNotEmpty && !force) return;
     loading = true;
     error = null;
-    if (force) _byFilter.clear(); // drop cached category results on manual refresh
+    if (force) _byId.clear(); // drop cached category results on manual refresh
     notifyListeners();
 
     if (_all.isEmpty) {
@@ -85,8 +99,20 @@ class CatalogState extends ChangeNotifier {
     try {
       final home = await _api.fetchHome();
       final titles = await _api.fetchTitles(per: 48);
+      final genres = await _api.fetchGenres();
       _hero = home?.hero;
       if (home != null && home.rails.isNotEmpty) _rails = home.rails;
+      if (genres.isNotEmpty) {
+        _genreCats = genres
+            .where((g) => !g.isAnime)
+            .map((g) => CatalogCategory(
+                  id: 'g:${g.slug}',
+                  th: g.name,
+                  en: g.nameEn ?? g.name,
+                  genre: g.slug,
+                ))
+            .toList();
+      }
       if (titles.isNotEmpty) {
         _all = titles;
         unawaited(_db.upsertContent(titles));
@@ -109,20 +135,20 @@ class CatalogState extends ChangeNotifier {
   }
 
   /// Switch category. 'all' shows the cached full list; any other category is
-  /// fetched from the server (`/titles?type=…`) because e.g. anime items don't
-  /// carry a distinguishing `type` on each record — the server owns that set.
-  Future<void> setFilter(CatalogFilter f) async {
-    if (filter == f) return;
-    filter = f;
+  /// fetched from the server (`/titles?type=|genre=|anime=`) and cached by id.
+  Future<void> setCategory(CatalogCategory cat) async {
+    if (_current.id == cat.id) return;
+    _current = cat;
     notifyListeners();
-    if (f == CatalogFilter.all || _byFilter.containsKey(f)) return; // cached / no fetch
+    if (cat.isAll || _byId.containsKey(cat.id)) return; // cached / no fetch
     filterLoading = true;
     notifyListeners();
     try {
-      _byFilter[f] = await _api.fetchTitles(type: f.type, per: 60);
+      _byId[cat.id] = await _api.fetchTitles(
+          type: cat.type, genre: cat.genre, anime: cat.anime, per: 60);
     } catch (e) {
-      _byFilter[f] = const [];
-      if (kDebugMode) debugPrint('catalog setFilter(${f.name}): $e');
+      _byId[cat.id] = const [];
+      if (kDebugMode) debugPrint('catalog setCategory(${cat.id}): $e');
     } finally {
       filterLoading = false;
       notifyListeners();
@@ -131,7 +157,7 @@ class CatalogState extends ChangeNotifier {
 
   /// The items backing the current category (before search is applied).
   List<Content> get _source =>
-      filter == CatalogFilter.all ? _all : (_byFilter[filter] ?? const []);
+      _current.isAll ? _all : (_byId[_current.id] ?? const []);
 
   List<Content> get visible {
     Iterable<Content> list = _source;

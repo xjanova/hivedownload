@@ -65,17 +65,39 @@ class NetwixApi {
     }
   }
 
-  /// Titles by type (series | movie | vertical), paginated.
-  Future<List<Content>> fetchTitles({String? type, int page = 1, int per = 24}) async {
+  /// Titles, paginated. Narrow by media [type] (series|movie|vertical), by
+  /// [genre] slug, or set [anime] for the anime/cartoon bucket. With none of
+  /// those, anime is excluded server-side (mirrors the web browse).
+  Future<List<Content>> fetchTitles(
+      {String? type, String? genre, bool anime = false, int page = 1, int per = 24}) async {
     try {
       final d = _data(await _dio.get('/titles', queryParameters: {
         'type': ?type,
+        'genre': ?genre,
+        if (anime) 'anime': 1,
         'page': page,
         'per': per,
       }, options: _opts));
       return _contentList(d?['items']);
     } catch (e) {
       if (kDebugMode) debugPrint('netwix fetchTitles: $e');
+      return const [];
+    }
+  }
+
+  /// The genre taxonomy for the app's category chips (name, name_en, slug,
+  /// is_anime). Empty on failure.
+  Future<List<GenreChip>> fetchGenres() async {
+    try {
+      final d = _data(await _dio.get('/genres', options: _opts));
+      final items = d?['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((m) => GenreChip.fromJson(m.cast<String, dynamic>()))
+          .toList();
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix fetchGenres: $e');
       return const [];
     }
   }
@@ -319,6 +341,22 @@ class NetwixHome {
   const NetwixHome({this.hero, required this.rails});
   final Content? hero;
   final List<NetwixRail> rails;
+}
+
+/// One genre in the taxonomy (`GET /genres`) — backs an Explore category chip.
+class GenreChip {
+  const GenreChip({required this.name, this.nameEn, required this.slug, this.isAnime = false});
+  final String name;
+  final String? nameEn;
+  final String slug;
+  final bool isAnime;
+
+  factory GenreChip.fromJson(Map<String, dynamic> j) => GenreChip(
+        name: (j['name'] as String?) ?? '',
+        nameEn: j['name_en'] as String?,
+        slug: (j['slug'] as String?) ?? '',
+        isAnime: j['is_anime'] == true,
+      );
 }
 
 class NetwixRail {
