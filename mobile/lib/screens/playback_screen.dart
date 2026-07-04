@@ -64,6 +64,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   bool _advancing = false;
   bool _fullscreen = false; // landscape + fit-to-frame (for horizontal titles)
 
+  // Player chrome (top bar / rail / ad / scrubber) auto-hides after a few idle
+  // seconds of playback and reappears on tap — so a landscape movie plays truly
+  // full-frame with nothing but the video (+ the persistent logo) on screen.
+  bool _chrome = true;
+  DateTime _lastInteract = DateTime.fromMillisecondsSinceEpoch(0);
+
   Content get c => widget.content;
   List<Episode> get eps => widget.episodes;
 
@@ -73,6 +79,7 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     final start = eps.indexWhere((e) => e.id == widget.startEpisodeId);
     _current = (start < 0 ? 0 : start).clamp(0, eps.length - 1);
     _pageController = PageController(initialPage: _current);
+    _lastInteract = DateTime.now();
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
@@ -224,6 +231,9 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
     _ensure(index + 1);
     _ensure(index - 1);
     _disposeFarFrom(index);
+    // New episode → show the controls again briefly.
+    _lastInteract = DateTime.now();
+    _chrome = true;
     setState(() {});
   }
 
@@ -246,6 +256,13 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
       _advancing = true;
       _pageController.nextPage(
           duration: const Duration(milliseconds: 350), curve: Curves.easeOut);
+    }
+
+    // Auto-hide the controls after a few idle seconds of playback (web parity).
+    if (_chrome &&
+        ctrl.value.isPlaying &&
+        now.difference(_lastInteract) > const Duration(seconds: 3)) {
+      _chrome = false;
     }
     if (mounted) setState(() {});
   }
@@ -275,7 +292,21 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   void _togglePlay() {
     final ctrl = _controllers[_current];
     if (ctrl == null) return;
-    setState(() => ctrl.value.isPlaying ? ctrl.pause() : ctrl.play());
+    final willPlay = !ctrl.value.isPlaying;
+    willPlay ? ctrl.play() : ctrl.pause();
+    // Keep the controls up while paused; they auto-hide again once it resumes.
+    _lastInteract = DateTime.now();
+    setState(() => _chrome = true);
+  }
+
+  /// Tap on the video toggles the controls (and never pauses) — so a horizontal
+  /// movie can play full-frame with nothing covering it. Play/pause is the
+  /// centre button.
+  void _onVideoTap() {
+    setState(() {
+      _chrome = !_chrome;
+      if (_chrome) _lastInteract = DateTime.now();
+    });
   }
 
   /// Fullscreen = rotate to landscape + show the whole frame (contain) instead
@@ -369,90 +400,121 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
               unlockCost: _member?.unlockCost ?? 5,
               fullscreen: _fullscreen,
               onUnlock: () => _unlockAt(index),
-              onTapVideo: index == _current ? _togglePlay : null,
+              onTapVideo: index == _current ? _onVideoTap : null,
               onRetry: () => _ensure(index),
               l: l,
             ),
           ),
-          // top bar (back + title) + persistent NetWix logo, like the web player
+
+          // Persistent NetWix logo — sits below where the chrome would be and
+          // stays on even after the controls auto-hide, so a clean fullscreen
+          // movie shows nothing but the video + our mark (like the web).
           Positioned(
             top: 0,
             left: 0,
-            right: 0,
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(c.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: AppTheme.display(15,
-                                      weight: FontWeight.w700, color: Colors.white)),
-                              Text('${l.pick('ตอนที่', 'EP')} ${eps[_current].number} · ${_current + 1}/${eps.length}',
-                                  style: AppTheme.body(11.5, color: Colors.white70)),
-                            ],
-                          ),
-                        ),
-                        // Fullscreen (landscape) is only meaningful for
-                        // horizontal titles; vertical short-dramas already fill
-                        // the portrait screen.
-                        if (!c.isVertical)
-                          _circleBtn(
-                            _fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-                            _toggleFullscreen,
-                          ),
-                      ],
-                    ),
-                    // Channel logo sits just under the chrome, top-left, and
-                    // stays put in every orientation — mirrors the web watermark.
-                    _watermark(),
-                  ],
-                ),
+                padding: const EdgeInsets.only(left: 14, top: 52),
+                child: _watermark(),
               ),
             ),
           ),
-          // right action rail (episodes list) — hidden in fullscreen/landscape
-          if (!_fullscreen)
-            Positioned(
-              right: 10,
-              bottom: 130,
-              child: Column(
-                children: [
-                  _railBtn(Icons.grid_view_rounded, l.pick('ตอน', 'Eps'), _openEpisodeSheet),
-                  const SizedBox(height: 18),
-                  _railBtn(
-                    _controllers[_current]?.value.isPlaying ?? false
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                    '',
-                    _togglePlay,
-                  ),
-                ],
-              ),
-            ),
-          // bottom: ad (free users, portrait only) + scrubber
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (!_fullscreen) const AdBanner(placement: 'player', height: 56),
-                  _scrubber(),
-                ],
+
+          // Everything else = the auto-hiding chrome. Fades out when idle and
+          // stops intercepting taps so a tap anywhere brings it back.
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !_chrome,
+              child: AnimatedOpacity(
+                opacity: _chrome ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: Stack(
+                  children: [
+                    // top bar (back + title + fullscreen)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: SafeArea(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Row(
+                            children: [
+                              _circleBtn(Icons.arrow_back_rounded, () => Navigator.of(context).pop()),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(c.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: AppTheme.display(15,
+                                            weight: FontWeight.w700, color: Colors.white)),
+                                    Text('${l.pick('ตอนที่', 'EP')} ${eps[_current].number} · ${_current + 1}/${eps.length}',
+                                        style: AppTheme.body(11.5, color: Colors.white70)),
+                                  ],
+                                ),
+                              ),
+                              // Fullscreen (landscape) is only meaningful for
+                              // horizontal titles; vertical short-dramas already
+                              // fill the portrait screen.
+                              if (!c.isVertical)
+                                _circleBtn(
+                                  _fullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                                  _toggleFullscreen,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // centre play / pause
+                    Center(
+                      child: GestureDetector(
+                        onTap: _togglePlay,
+                        child: Container(
+                          width: 66,
+                          height: 66,
+                          decoration: const BoxDecoration(
+                              color: Color(0x59000000), shape: BoxShape.circle),
+                          child: Icon(
+                            (_controllers[_current]?.value.isPlaying ?? false)
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                            size: 40,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // right action rail (episodes) — portrait only
+                    if (!_fullscreen)
+                      Positioned(
+                        right: 10,
+                        bottom: 130,
+                        child: _railBtn(Icons.grid_view_rounded, l.pick('ตอน', 'Eps'), _openEpisodeSheet),
+                      ),
+
+                    // bottom: ad (free users, portrait only) + scrubber
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: SafeArea(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (!_fullscreen) const AdBanner(placement: 'player', height: 56),
+                            _scrubber(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -532,15 +594,12 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
   /// `partials/player-watermark`. Bigger over vertical clips (which fill the
   /// frame) so it still reads as ours. Never intercepts taps.
   Widget _watermark() => IgnorePointer(
-        child: Padding(
-          padding: const EdgeInsets.only(top: 6, left: 2),
-          child: Opacity(
-            opacity: 0.9,
-            child: Image.asset(
-              'assets/brand/netwix-wordmark.png',
-              height: c.isVertical ? 30 : 22,
-              filterQuality: FilterQuality.medium,
-            ),
+        child: Opacity(
+          opacity: 0.9,
+          child: Image.asset(
+            'assets/brand/netwix-wordmark.png',
+            height: c.isVertical ? 30 : 22,
+            filterQuality: FilterQuality.medium,
           ),
         ),
       );
@@ -679,12 +738,6 @@ class _EpisodePage extends StatelessWidget {
               )
             else
               const Center(child: CircularProgressIndicator(color: T.accent)),
-
-            // paused indicator (only for the active, tappable page)
-            if (onTapVideo != null && ctrl != null && ctrl.value.isInitialized && !ctrl.value.isPlaying)
-              const Center(
-                child: Icon(Icons.play_arrow_rounded, color: Colors.white70, size: 74),
-              ),
           ],
         ),
       ),
