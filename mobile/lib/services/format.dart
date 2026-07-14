@@ -19,6 +19,24 @@ class Format {
 
   static String percent(double fraction) => '${(fraction.clamp(0, 1) * 100).toStringAsFixed(0)}%';
 
+  /// A day-count as the nicest Thai/English unit — mirrors the web's
+  /// Campaigns::human() so promo texts always match (365→"1 ปี"/"1 yr").
+  static String humanDays(int days, {bool thai = true}) {
+    if (days >= 365 && days % 365 == 0) {
+      final n = days ~/ 365;
+      return thai ? '$n ปี' : '$n yr';
+    }
+    if (days >= 30 && days % 30 == 0) {
+      final n = days ~/ 30;
+      return thai ? '$n เดือน' : '$n mo';
+    }
+    if (days >= 7 && days % 7 == 0) {
+      final n = days ~/ 7;
+      return thai ? '$n สัปดาห์' : '$n wk';
+    }
+    return thai ? '$days วัน' : '$days days';
+  }
+
   /// mm:ss or h:mm:ss for a duration in seconds.
   static String duration(int totalSeconds) {
     final s = math.max(0, totalSeconds);

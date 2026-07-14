@@ -51,6 +51,8 @@ dependencies:
   # Auth reuses the NetWix web sign-in (Google/LINE/email) in an in-app browser
   # and captures the netwix:// callback — no native OAuth client needed.
   flutter_web_auth_2: ^4.1.0
+  # Mission player for YouTube-sourced missions (IFrame API in a WebView).
+  webview_flutter: ^4.10.0
 
 dev_dependencies:
   flutter_test:

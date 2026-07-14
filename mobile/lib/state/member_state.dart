@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/member.dart';
+import '../models/mission.dart';
 import '../models/referral.dart';
 import '../services/account_store.dart';
 import '../services/auth_service.dart';
@@ -23,13 +24,37 @@ class MemberState extends ChangeNotifier {
 
   Member? _member;
   int _coins = 0;
+  int _gold = 0;
   ReferralStatus? _referral;
   bool _dailyAvailable = true; // server: daily_checkin_available
+  List<MissionItem> _missions = const [];
+  Map<String, dynamic>? _config; // public membership/config (campaign rules)
 
   Member? get member => _member;
   bool get isLoggedIn => _member?.isLoggedIn ?? false;
   bool get isPro => _member?.proActive ?? false;
   int get coins => _coins;
+
+  /// Gold-coin balance (server-authoritative; missions can reward gold).
+  int get goldCoins => _gold;
+
+  /// Watch-to-earn missions from the server (empty for guests).
+  List<MissionItem> get missions => _missions;
+
+  // ---- live campaign rules (public membership/config; works for guests) ----
+
+  /// Free-Pro days a NEW signup gets right now (0 = campaign off).
+  int get signupFreeProDays {
+    final pro = _config?['pro'];
+    return pro is Map ? ((pro['free_days'] as num?)?.toInt() ?? 0) : 0;
+  }
+
+  /// Free-Pro days each referred friend grants (0 = off).
+  int get referralProDays {
+    final ref = _config?['referral'];
+    if (ref is! Map || ref['enabled'] == false) return 0;
+    return (ref['referee_pro_days'] as num?)?.toInt() ?? 0;
+  }
 
   /// Prefer the server's referral code; fall back to the cached member's.
   String get referralCode {
@@ -58,6 +83,16 @@ class MemberState extends ChangeNotifier {
     _api.setToken(token);
     notifyListeners();
     if (token != null) unawaited(refreshMembership());
+    unawaited(refreshCampaignConfig()); // public — guests see live promos too
+  }
+
+  /// Pull the PUBLIC campaign rules (free-Pro signup window, referral rewards)
+  /// so the app's promos always match the web's live config.
+  Future<void> refreshCampaignConfig() async {
+    final cfg = await _api.fetchMembershipConfig();
+    if (cfg == null) return;
+    _config = cfg;
+    notifyListeners();
   }
 
   /// Pull the member's server truth — profile, coins, Pro, referral. Keeps the
@@ -75,12 +110,34 @@ class MemberState extends ChangeNotifier {
   /// Back-compat alias (referral now comes from the membership state).
   Future<void> refreshReferral() => refreshMembership();
 
+  /// Pull the watch-to-earn missions + this member's status for each.
+  Future<void> refreshMissions() async {
+    if (!isLoggedIn) {
+      if (_missions.isNotEmpty) {
+        _missions = const [];
+        notifyListeners();
+      }
+      return;
+    }
+    final items = await _api.fetchMissions();
+    _missions = items;
+    notifyListeners();
+  }
+
+  /// Apply a fresh server membership state (e.g. the one a completed mission
+  /// hands back) so coins/Pro update everywhere at once.
+  void applyMembershipState(Map<String, dynamic> state) {
+    _applyState(state);
+    notifyListeners();
+  }
+
   /// Apply a server membership `state` map to local coins / Pro / referral.
   void _applyState(dynamic raw) {
     if (raw is! Map) return;
     final s = raw.cast<String, dynamic>();
 
     _coins = (s['coins'] as num?)?.toInt() ?? _coins;
+    _gold = (s['gold_coins'] as num?)?.toInt() ?? _gold;
     unawaited(_store.setCoins(_coins));
 
     if (s.containsKey('daily_checkin_available')) {
@@ -124,6 +181,8 @@ class MemberState extends ChangeNotifier {
     await _api.logoutToken(); // best-effort server revoke
     _member = null;
     _referral = null;
+    _missions = const [];
+    _gold = 0;
     _api.setToken(null);
     await _store.setMember(null);
     notifyListeners();

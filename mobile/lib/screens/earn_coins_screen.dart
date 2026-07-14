@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/l10n.dart';
+import '../models/mission.dart';
 import '../services/auth_service.dart';
+import '../services/format.dart';
 import '../services/reward_config.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
@@ -12,15 +14,35 @@ import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
 import '../widgets/referral_promo_card.dart';
+import 'mission_watch_screen.dart';
 import 'reward_watch_screen.dart';
 import 'team_screen.dart';
 
 /// หาเหรียญ · Earn coins — the activities I defined (backend can add more).
-class EarnCoinsScreen extends StatelessWidget {
+class EarnCoinsScreen extends StatefulWidget {
   const EarnCoinsScreen({super.key, this.embedded = false});
 
   /// True when hosted as a bottom-nav tab (no back button).
   final bool embedded;
+
+  @override
+  State<EarnCoinsScreen> createState() => _EarnCoinsScreenState();
+}
+
+class _EarnCoinsScreenState extends State<EarnCoinsScreen> {
+  bool get embedded => widget.embedded;
+
+  @override
+  void initState() {
+    super.initState();
+    // Server missions + live campaign rules (safe for guests — missions no-op).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final member = context.read<MemberState>();
+      member.refreshMissions();
+      member.refreshCampaignConfig();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +93,17 @@ class EarnCoinsScreen extends StatelessWidget {
               ),
             ),
 
-            if (!member.isLoggedIn) _loginCard(context, l),
+            if (!member.isLoggedIn) _loginCard(context, l, member),
+
+            // ---- ภารกิจพิเศษจากเซิร์ฟเวอร์ (แอดมินกำหนด — ดูคลิปครบเวลารับเหรียญ) ----
+            if (member.isLoggedIn && member.missions.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(2, 6, 2, 10),
+                child: Text(l.bi('ภารกิจพิเศษ', 'Missions'),
+                    style: AppTheme.display(16, weight: FontWeight.w700)),
+              ),
+              for (final m in member.missions) _missionCard(context, l, m),
+            ],
 
             _activity(
               icon: Icons.event_available_rounded,
@@ -133,8 +165,21 @@ class EarnCoinsScreen extends StatelessWidget {
               children: [
                 Text(l.bi('เหรียญของฉัน', 'My coins'),
                     style: AppTheme.body(12.5, color: T.textMuted)),
-                Text('${member.coins}',
-                    style: AppTheme.display(26, weight: FontWeight.w700, color: T.accent)),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('${member.coins}',
+                        style: AppTheme.display(26, weight: FontWeight.w700, color: T.accent)),
+                    if (member.goldCoins > 0) ...[
+                      const SizedBox(width: 10),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text('🥇 ${member.goldCoins} ${l.pick('ทอง', 'gold')}',
+                            style: AppTheme.body(12.5, weight: FontWeight.w700, color: const Color(0xFFF5C542))),
+                      ),
+                    ],
+                  ],
+                ),
               ],
             ),
           ),
@@ -145,7 +190,92 @@ class EarnCoinsScreen extends StatelessWidget {
     );
   }
 
-  Widget _loginCard(BuildContext context, L10n l) {
+  /// One server mission — tap opens the watch flow; the reward is granted
+  /// server-side the moment the validated watch-time is reached.
+  Widget _missionCard(BuildContext context, L10n l, MissionItem m) {
+    final done = m.earned;
+    final sub = [
+      '${m.requiredSeconds}s',
+      if (m.isDaily) l.pick('รายวัน', 'daily') else l.pick('ครั้งเดียว', 'once'),
+      if (m.description != null && m.description!.isNotEmpty) m.description!,
+    ].join(' · ');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: T.glass(),
+      child: Row(
+        children: [
+          HexIcon(
+              icon: m.isYoutube ? Icons.smart_display_rounded : Icons.movie_rounded,
+              size: 40,
+              color: done ? T.textFaint : (m.isGold ? const Color(0xFFF5C542) : T.accent)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(m.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(14, weight: FontWeight.w600, color: T.textPrimary)),
+                Text(sub,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.body(11.5, color: T.textMuted)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text('+${m.rewardAmount}${m.isGold ? ' 🥇' : ''}',
+                  style: AppTheme.display(15,
+                      weight: FontWeight.w700,
+                      color: m.isGold ? const Color(0xFFF5C542) : T.accent)),
+              const SizedBox(height: 4),
+              GestureDetector(
+                onTap: done ? null : () => _openMission(context, m),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: done ? const Color(0x14FFFFFF) : T.accentSoft,
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(color: done ? T.hairline : T.accentGlow),
+                  ),
+                  child: Text(
+                      done
+                          ? (m.isDaily ? l.pick('รับแล้ววันนี้', 'Claimed today') : l.pick('สำเร็จแล้ว', 'Done'))
+                          : l.pick('ดูเลย', 'Watch'),
+                      style: AppTheme.body(11.5,
+                          weight: FontWeight.w600, color: done ? T.textFaint : T.accent)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openMission(BuildContext context, MissionItem m) async {
+    final earned = await Navigator.of(context)
+        .push<bool>(MaterialPageRoute(builder: (_) => MissionWatchScreen(mission: m)));
+    if (!context.mounted) return;
+    if (earned == true) _toast(context, '🎉 +${m.rewardLabel}');
+    // Statuses may have changed either way (attempt persisted server-side).
+    await context.read<MemberState>().refreshMissions();
+  }
+
+  Widget _loginCard(BuildContext context, L10n l, MemberState member) {
+    // Headline follows the LIVE campaign (same source as the web marquee):
+    // free-Pro signup window when it's on, else the classic coin bonus.
+    final freeDays = member.signupFreeProDays;
+    final headline = freeDays > 0
+        ? l.pick('สมัครใหม่วันนี้ รับ Premium ฟรี ${Format.humanDays(freeDays)}! 🎁',
+            'Sign up today — ${Format.humanDays(freeDays, thai: false)} of free Premium! 🎁')
+        : l.pick('เข้าสู่ระบบครั้งแรก รับ 10 เหรียญฟรี', 'Sign in — get 10 free coins');
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(14),
@@ -157,7 +287,7 @@ class EarnCoinsScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(l.pick('เข้าสู่ระบบครั้งแรก รับ 10 เหรียญฟรี', 'Sign in — get 10 free coins'),
+          Text(headline,
               style: AppTheme.body(14, weight: FontWeight.w700, color: T.textPrimary)),
           const SizedBox(height: 10),
           Row(children: [

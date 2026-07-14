@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../models/content.dart';
 import '../models/episode.dart';
 import '../models/member.dart';
+import '../models/mission.dart';
 
 /// Client for the NetWix mobile API (`https://netwix.online/api/app/*`).
 ///
@@ -229,6 +230,85 @@ class NetwixApi {
     } catch (e) {
       if (kDebugMode) debugPrint('netwix team: $e');
       return null;
+    }
+  }
+
+  /// The PUBLIC admin-defined membership rules (`membership/config`) — free-Pro
+  /// signup window (`pro.free_days`), referral rewards, coin rates. Works for
+  /// guests, so the app can show the live campaign promos. Null on failure.
+  Future<Map<String, dynamic>?> fetchMembershipConfig() async {
+    try {
+      return _data(await _dio.get('/membership/config'));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix membershipConfig: $e');
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------- missions
+  //
+  // Watch-to-earn missions (same MissionService anti-cheat as the web /missions
+  // page): start issues a token, then the app beats every ~15s ONLY while the
+  // video is playing AND the app is foregrounded. The server credits real
+  // wall-clock time between beats and awards once watched ≥ required.
+
+  /// Active missions + this member's status for each (token-only).
+  Future<List<MissionItem>> fetchMissions() async {
+    try {
+      final d = _data(await _dio.get('/missions', options: _opts));
+      final items = d?['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((m) => MissionItem.fromJson(m.cast<String, dynamic>()))
+          .toList();
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix missions: $e');
+      return const [];
+    }
+  }
+
+  /// Begin (or restart) a mission attempt → the heartbeat token.
+  Future<MissionStart> startMission(int missionId) async {
+    try {
+      final r = await _dio.post('/missions/$missionId/start',
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+      final b = r.data;
+      final d = (b is Map && b['data'] is Map) ? (b['data'] as Map).cast<String, dynamic>() : const <String, dynamic>{};
+      return MissionStart(
+        ok: b is Map && b['success'] == true,
+        token: d['token'] as String?,
+        required: (d['required'] as num?)?.toInt() ?? 0,
+        error: (b is Map ? b['error'] : null) as String?,
+        alreadyEarned: d['earned'] == true,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix startMission($missionId): $e');
+      return const MissionStart(ok: false);
+    }
+  }
+
+  /// One heartbeat from an actively-playing, foregrounded player.
+  Future<MissionBeat> beatMission(int missionId, String token) async {
+    try {
+      final r = await _dio.post('/missions/$missionId/beat',
+          data: {'token': token},
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+      final b = r.data;
+      final d = (b is Map && b['data'] is Map) ? (b['data'] as Map).cast<String, dynamic>() : const <String, dynamic>{};
+      final reward = d['reward'];
+      return MissionBeat(
+        ok: b is Map && b['success'] == true,
+        done: d['done'] == true,
+        watched: (d['watched'] as num?)?.toInt() ?? 0,
+        required: (d['required'] as num?)?.toInt() ?? 0,
+        rewardLabel: reward is Map ? reward['label'] as String? : null,
+        membership: d['membership'] is Map ? (d['membership'] as Map).cast<String, dynamic>() : null,
+        error: (b is Map ? b['error'] : null) as String?,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix beatMission($missionId): $e');
+      return const MissionBeat(ok: false);
     }
   }
 

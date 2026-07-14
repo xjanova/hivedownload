@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/l10n.dart';
+import '../services/format.dart';
 import '../services/settings_store.dart';
 import '../state/app_state.dart';
 import '../state/member_state.dart';
@@ -110,7 +111,12 @@ class MenuScreen extends StatelessWidget {
                   children: [
                     Text(l.pick('ยังไม่ได้เข้าสู่ระบบ', 'Not signed in'),
                         style: AppTheme.body(14.5, weight: FontWeight.w700, color: T.textPrimary)),
-                    Text(l.pick('เข้าสู่ระบบครั้งแรก รับ 10 เหรียญฟรี', 'Sign in — 10 free coins'),
+                    Text(
+                        member.signupFreeProDays > 0
+                            ? l.pick(
+                                'สมัครใหม่รับ Premium ฟรี ${Format.humanDays(member.signupFreeProDays)}! 🎁',
+                                'Sign up — free Premium for ${Format.humanDays(member.signupFreeProDays, thai: false)}! 🎁')
+                            : l.pick('เข้าสู่ระบบครั้งแรก รับ 10 เหรียญฟรี', 'Sign in — 10 free coins'),
                         style: AppTheme.body(11.5, color: T.accent)),
                   ],
                 ),
