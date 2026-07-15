@@ -76,7 +76,7 @@ class AutoUpdater {
       final parsed = ReleaseVersion.parse(tag);
       final latestVersion = parsed.parts.join('.');
       final latestBuild = parsed.build;
-      final notes = (data['notes'] as String?)?.trim() ?? '';
+      final notes = _sanitizeNotes((data['notes'] as String?) ?? '');
       final apkSize = (data['size'] as num?)?.toInt() ?? 0;
 
       final available =
@@ -138,6 +138,21 @@ class AutoUpdater {
       if (kDebugMode) debugPrint('downloadAndInstall failed: $e');
       yield const UpdateProgress(UpdatePhase.error, error: 'อัปเดตไม่สำเร็จ ลองใหม่อีกครั้ง');
     }
+  }
+
+  /// Defence-in-depth: strip GitHub's auto-appended "Full Changelog" line and any
+  /// github.com links from the release notes before they reach the update sheet.
+  /// The server sanitises too, but the app must never render an off-domain link
+  /// even if it somehow receives one (old server, tampered response).
+  static String _sanitizeNotes(String raw) {
+    var s = raw.replaceAll(
+        RegExp(r'^\s*\*{0,2}Full Changelog\*{0,2}:.*$',
+            multiLine: true, caseSensitive: false),
+        '');
+    s = s.replaceAll(
+        RegExp(r'https?://\S*github(usercontent)?\.com/\S*', caseSensitive: false),
+        '');
+    return s.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
   }
 
   String _friendlyError(String statusName, String? value) {
