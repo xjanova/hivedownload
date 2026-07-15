@@ -10,7 +10,7 @@ import '../widgets/common.dart';
 import '../widgets/update_sheet.dart';
 
 /// 06 — What's New / Update · อัปเดต. Shows the running version and a manual
-/// "check for updates" that reuses the GitHub-releases OTA flow.
+/// "check for updates" that reuses the in-app OTA update flow (via netwix.online).
 class WhatsNewScreen extends StatefulWidget {
   const WhatsNewScreen({super.key});
 

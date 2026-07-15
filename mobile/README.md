@@ -25,7 +25,7 @@ lib/
 │   ├─ auth_service.dart   web sign-in bridge (Google/LINE/email) + netwix:// deep link
 │   ├─ catalog_db.dart     SQLite cache (catalog / episodes / resume)
 │   ├─ ad_service.dart     ad delivery + rotation (main.thaiprompt.online)
-│   ├─ auto_updater.dart   GitHub-releases OTA + update_info.dart (version compare)
+│   ├─ auto_updater.dart   in-app OTA via netwix.online + update_info.dart (version compare)
 │   └─ account_store · settings_store · reward_config · format
 ├─ state/      app_state, catalog_state, member_state (provider)
 ├─ theme/      tokens, app_theme, hex (NetWix neon)
@@ -93,7 +93,7 @@ flutter run                     # debug on a connected device
 flutter build apk --release     # signed release (see below)
 ```
 
-## Release / auto-update (GitHub Actions → GitHub Releases → in-app OTA)
+## Release / auto-update (GitHub Actions → Release → netwix.online mirror → in-app OTA)
 `mobile/pubspec.yaml` `version: X.Y.Z` is the **single source of truth** and is
 **plain semver — no `+build` suffix**. `versionName = X.Y.Z`; `versionCode` is the
 CI run number (always increases); git tag `vX.Y.Z`.
@@ -102,7 +102,11 @@ CI run number (always increases); git tag `vX.Y.Z`.
 `.github/workflows/auto-version-bump.yml` reads the PR's `release:*` label
 (default `patch`), bumps pubspec, pushes tag `vX.Y.Z`, then dispatches
 `android-release.yml` to build the signed APK and publish the Release.
-`AutoUpdater` then offers it in-app (`ota_update`).
+
+The **app never talks to that Release directly.** netwix.online mirrors the new
+APK to its own storage on first request, and `AutoUpdater` checks
+`GET /api/app/version` and downloads `/download/apk` — both on our own domain, so
+the client never contacts or reveals where the build actually lives.
 
 > Note: a tag pushed by the default `GITHUB_TOKEN` does **not** fire a tag event,
 > so the bump job *dispatches* the release workflow rather than relying on the

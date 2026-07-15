@@ -23,7 +23,7 @@
 - **เล่นทันที** — สตรีม MP4/HLS · พรีวิว EP1 อัตโนมัติแบบ Netflix · โหมดเต็มจอ
 - **สมาชิก** — ล็อกอินผ่านเว็บ NetWix (Google / LINE / อีเมล) ด้วย deep link `netwix://`
 - **เหรียญ & Pro** — สะสมเหรียญปลดล็อกตอน · ชวนเพื่อนรับ Pro ฟรี · Pro ตัดโฆษณา
-- **อัปเดตในแอป (OTA)** — ดึง GitHub Release ล่าสุดมาติดตั้งทับให้เอง
+- **อัปเดตในแอป (OTA)** — โหลดเวอร์ชันล่าสุดจาก netwix.online มาติดตั้งทับให้เอง
 
 ## 🚀 พัฒนา / รัน
 
@@ -47,8 +47,9 @@ flutter build apk --release
 - **อัตโนมัติ:** merge PR เข้า `main` พร้อม label `release:patch|minor|major` → *Auto Version Bump* จะ bump + tag + สั่ง build
 - **ด้วยมือ:** แก้ `version:` ใน pubspec แล้ว `git tag vX.Y.Z && git push origin main vX.Y.Z`
 
-CI (`android-release.yml`) build APK ที่เซ็นด้วย keystore แล้วเผยแพร่เป็น GitHub Release —
-แอปที่ติดตั้งไว้เห็นและอัปเดตให้เองผ่าน OTA (`applicationId com.netwix.app` + signing key คงที่ตลอด)
+CI (`android-release.yml`) build APK ที่เซ็นด้วย keystore แล้วเผยแพร่เป็น Release —
+จากนั้น **netwix.online จะ mirror ไฟล์มาเก็บที่โดเมนเราเอง** และแอปเช็ก/โหลดผ่าน
+`GET /api/app/version` + `/download/apk` (ตัวแอปไม่แตะ GitHub เลย · `applicationId com.netwix.app` + signing key คงที่ตลอด)
 
 ## 🧱 Stack
 

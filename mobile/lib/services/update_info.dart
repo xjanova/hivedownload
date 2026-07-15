@@ -65,7 +65,7 @@ bool isReleaseNewer(String curVer, int curBuild, String newVer, int newBuild) {
   return curBuild < newBuild;
 }
 
-/// Result of a GitHub-releases check, ready for the UI.
+/// Result of an update check (netwix.online release manifest), ready for the UI.
 class UpdateInfo {
   const UpdateInfo({
     required this.available,

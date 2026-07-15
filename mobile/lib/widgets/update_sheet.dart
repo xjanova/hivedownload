@@ -12,7 +12,7 @@ import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import 'common.dart';
 
-/// Checks GitHub Releases and, if a newer build exists, shows the update sheet.
+/// Checks netwix.online for a newer build and, if one exists, shows the update sheet.
 /// [manual] = triggered by the user (so we surface an "up to date" toast and
 /// don't honour a previously-skipped tag).
 Future<void> maybePromptUpdate(BuildContext context, {bool manual = false}) async {

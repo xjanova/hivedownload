@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:ota_update/ota_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'netwix_api.dart';
 import 'update_info.dart';
 
 /// Progress of an in-flight update install.
@@ -15,26 +16,32 @@ class UpdateProgress {
 
 enum UpdatePhase { downloading, installing, done, error }
 
-/// In-app self-update: reads the latest GitHub Release, compares versions, and
-/// (on Android) downloads + installs the attached APK via `ota_update`.
+/// In-app self-update: reads the latest release manifest from netwix.online,
+/// compares versions, and (on Android) downloads + installs the APK via
+/// `ota_update`.
 ///
-/// Distribution model is sideloaded GitHub Releases (NOT Play Store), so we use
-/// `ota_update` rather than `in_app_update`. Because every release keeps the
-/// same `applicationId` and signing key, Android installs the new APK over the
-/// old one and **user data is preserved**.
+/// Distribution is sideloaded (NOT Play Store), so we use `ota_update` rather
+/// than `in_app_update`. Both the version check (`/api/app/version`) and the APK
+/// download (`/download/apk`) go entirely through our own domain — the app never
+/// contacts or reveals where the binary is actually built. Because every release
+/// keeps the same `applicationId` and signing key, Android installs the new APK
+/// over the old one and **user data is preserved**.
 class AutoUpdater {
   AutoUpdater({Dio? dio})
       : _dio = dio ??
             Dio(BaseOptions(
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 20),
-              headers: {'Accept': 'application/vnd.github+json'},
+              headers: {'Accept': 'application/json'},
             ));
 
-  static const String owner = 'xjanova';
-  static const String repo = 'netwixmobile';
-  static String get latestReleaseApi =>
-      'https://api.github.com/repos/$owner/$repo/releases/latest';
+  /// Version manifest on our own API (`https://netwix.online/api/app/version`).
+  static String get versionApi => '${NetwixApi.baseUrl}/version';
+
+  /// Where the APK is downloaded from — a fixed route on our own domain that
+  /// mirrors + streams the latest build. Kept as our canonical origin (not a
+  /// server-supplied link) so the download target can never point off-domain.
+  static String get apkDownloadUrl => '${NetwixApi.origin}/download/apk';
 
   final Dio _dio;
 
@@ -42,9 +49,9 @@ class AutoUpdater {
   /// and stack two update sheets (learned from Juntra's double-tap bug).
   static bool _checkInFlight = false;
 
-  /// Queries GitHub for the latest release and reports whether it's newer than
-  /// the running build. Returns null on any network/parse failure (callers show
-  /// a generic message — never a raw exception).
+  /// Asks our API for the latest release and reports whether it's newer than the
+  /// running build. Returns null on any network/parse failure (callers show a
+  /// generic message — never a raw exception, and never anything off-domain).
   Future<UpdateInfo?> checkForUpdate() async {
     if (_checkInFlight) return null;
     _checkInFlight = true;
@@ -53,36 +60,27 @@ class AutoUpdater {
       final curVer = pkg.version; // e.g. "1.0.0"
       final curBuild = int.tryParse(pkg.buildNumber) ?? 0;
 
-      final resp = await _dio.get<Map<String, dynamic>>(latestReleaseApi);
-      final data = resp.data;
+      final resp = await _dio.get<Map<String, dynamic>>(versionApi);
+      final body = resp.data;
+      // Envelope: {success, data}. A null `data` means "no release / up to date".
+      final data = (body != null &&
+              body['success'] == true &&
+              body['data'] is Map)
+          ? (body['data'] as Map).cast<String, dynamic>()
+          : null;
       if (data == null) return null;
 
-      final tag = (data['tag_name'] as String?)?.trim() ?? '';
+      final tag = (data['tag'] as String?)?.trim() ?? '';
       if (tag.isEmpty) return null;
 
       final parsed = ReleaseVersion.parse(tag);
       final latestVersion = parsed.parts.join('.');
       final latestBuild = parsed.build;
-      final notes = (data['body'] as String?)?.trim() ?? '';
-
-      // Find the .apk asset.
-      String? apkUrl;
-      var apkSize = 0;
-      final assets = data['assets'];
-      if (assets is List) {
-        for (final a in assets) {
-          if (a is Map &&
-              (a['name'] as String?)?.toLowerCase().endsWith('.apk') == true) {
-            apkUrl = a['browser_download_url'] as String?;
-            apkSize = (a['size'] as num?)?.toInt() ?? 0;
-            break;
-          }
-        }
-      }
+      final notes = (data['notes'] as String?)?.trim() ?? '';
+      final apkSize = (data['size'] as num?)?.toInt() ?? 0;
 
       final available =
-          isReleaseNewer(curVer, curBuild, latestVersion, latestBuild) &&
-              apkUrl != null;
+          isReleaseNewer(curVer, curBuild, latestVersion, latestBuild);
 
       return UpdateInfo(
         available: available,
@@ -92,7 +90,8 @@ class AutoUpdater {
         latestBuild: latestBuild,
         tag: tag,
         notes: notes,
-        apkUrl: apkUrl,
+        // Always our own domain — see [apkDownloadUrl].
+        apkUrl: available ? apkDownloadUrl : null,
         apkSizeBytes: apkSize,
       );
     } catch (e) {
