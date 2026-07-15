@@ -41,7 +41,9 @@ class AutoUpdater {
   /// Where the APK is downloaded from — a fixed route on our own domain that
   /// mirrors + streams the latest build. Kept as our canonical origin (not a
   /// server-supplied link) so the download target can never point off-domain.
-  static String get apkDownloadUrl => '${NetwixApi.origin}/download/apk';
+  /// `?src=update` marks this as an in-app self-update so the web excludes it from
+  /// the website APK-download count (an update is not a new download).
+  static String get apkDownloadUrl => '${NetwixApi.origin}/download/apk?src=update';
 
   final Dio _dio;
 
