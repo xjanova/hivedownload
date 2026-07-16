@@ -13,12 +13,18 @@ class PosterImage extends StatelessWidget {
     this.seed = 0,
     this.fit = BoxFit.cover,
     this.radius = T.rMedia,
+    this.memCacheWidth = 400,
   });
 
   final String url;
   final int seed;
   final BoxFit fit;
   final double radius;
+
+  /// Decode width cap. Posters render at ~118-200 logical px, so decoding the
+  /// full-size artwork into memory (the default) wastes tens of MB across a
+  /// grid. 400px covers 3x-density screens; pass a larger cap for hero images.
+  final int memCacheWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +37,7 @@ class PosterImage extends StatelessWidget {
         : CachedNetworkImage(
             imageUrl: url,
             fit: fit,
+            memCacheWidth: memCacheWidth,
             placeholder: (_, _) => fallback,
             errorWidget: (_, _, _) => fallback,
             fadeInDuration: const Duration(milliseconds: 200),

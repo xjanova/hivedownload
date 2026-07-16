@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "945231906609",
+    "project_id": "netwix-online",
+    "storage_bucket": "netwix-online.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:945231906609:android:7a68adc6291cfbc969d210",
+        "android_client_info": {
+          "package_name": "com.netwix.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCpYm4O61S7m_l9BWjWF96SKC60hrccMUc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -13,10 +13,13 @@ import 'services/auto_updater.dart';
 import 'services/catalog_db.dart';
 import 'services/debug_reporter.dart';
 import 'services/netwix_api.dart';
+import 'services/push_service.dart';
 import 'services/settings_store.dart';
+import 'services/telemetry.dart';
 import 'state/app_state.dart';
 import 'state/catalog_state.dart';
 import 'state/member_state.dart';
+import 'state/notification_state.dart';
 import 'theme/app_theme.dart';
 
 /// Lets screens refresh when a pushed route (e.g. the player) pops back —
@@ -55,6 +58,11 @@ Future<void> main() async {
   // (ExoPlayer on Android); the fvp/ffmpeg backend tried in 1.0.9 broke ALL
   // playback and was removed.
 
+  // Cap the in-memory image cache: poster grids decode a LOT of images and the
+  // Flutter default (100MB) lets a long browse session balloon the heap on
+  // low-RAM devices. Disk cache (cached_network_image) is unaffected.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 64 << 20; // 64MB
+
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
@@ -70,6 +78,14 @@ Future<void> main() async {
   final accountStore = await AccountStore.load();
   final adFrequency = await AdFrequency.load();
   final memberState = MemberState(accountStore, api, AuthService(api))..init();
+  final notifications = NotificationState(api, settings)..start();
+
+  // Anonymous device statistics (disclosed in the privacy policy) — after the
+  // token is applied so a signed-in launch links the install to the account.
+  unawaited(Telemetry.report(api, settings));
+
+  // FCM push — best-effort; the in-app inbox still works without it.
+  unawaited(PushService.init(settings, notifications));
 
   runApp(HiveApp(
     settings: settings,
@@ -77,6 +93,7 @@ Future<void> main() async {
     db: db,
     memberState: memberState,
     adFrequency: adFrequency,
+    notifications: notifications,
   ));
 }
 
@@ -88,6 +105,7 @@ class HiveApp extends StatelessWidget {
     required this.db,
     required this.memberState,
     required this.adFrequency,
+    required this.notifications,
   });
 
   final SettingsStore settings;
@@ -95,6 +113,7 @@ class HiveApp extends StatelessWidget {
   final CatalogDb db;
   final MemberState memberState;
   final AdFrequency adFrequency;
+  final NotificationState notifications;
 
   @override
   Widget build(BuildContext context) {
@@ -103,6 +122,7 @@ class HiveApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AppState(settings)),
         ChangeNotifierProvider(create: (_) => CatalogState(api, db)),
         ChangeNotifierProvider.value(value: memberState),
+        ChangeNotifierProvider.value(value: notifications),
         Provider<AdFrequency>.value(value: adFrequency),
         Provider<NetwixApi>.value(value: api),
         Provider<CatalogDb>(create: (_) => db),

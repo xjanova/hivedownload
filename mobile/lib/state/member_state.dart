@@ -177,6 +177,24 @@ class MemberState extends ChangeNotifier {
     return res;
   }
 
+  /// Danger zone: permanently delete the account server-side, then clear every
+  /// local trace. Returns true on success (caller shows the goodbye message).
+  Future<bool> deleteAccount() async {
+    if (!isLoggedIn) return false;
+    final ok = await _api.deleteAccount();
+    if (!ok) return false;
+    _member = null;
+    _referral = null;
+    _missions = const [];
+    _gold = 0;
+    _coins = 0;
+    _api.setToken(null);
+    await _store.setMember(null);
+    await _store.setCoins(0);
+    notifyListeners();
+    return true;
+  }
+
   Future<void> logout() async {
     await _api.logoutToken(); // best-effort server revoke
     _member = null;

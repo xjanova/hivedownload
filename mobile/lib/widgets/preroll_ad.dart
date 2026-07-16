@@ -225,6 +225,7 @@ class _PrerollAdOverlayState extends State<PrerollAdOverlay> {
       return CachedNetworkImage(
         imageUrl: ad.src!,
         fit: BoxFit.contain,
+        memCacheWidth: 1600, // full-screen creative; cap decode all the same
         errorWidget: (_, _, _) {
           // Don't strand the viewer on a broken creative.
           WidgetsBinding.instance.addPostFrameCallback((_) => _finish());

@@ -9,12 +9,15 @@ import '../services/netwix_api.dart';
 import '../state/app_state.dart';
 import '../state/catalog_state.dart';
 import '../state/member_state.dart';
+import '../state/notification_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/hex.dart';
 import '../theme/tokens.dart';
 import '../widgets/common.dart';
 import '../widgets/poster_card.dart';
 import '../widgets/poster_image.dart';
+import '../widgets/promo_banner_carousel.dart';
+import 'notifications_screen.dart';
 import 'playback_screen.dart';
 
 /// 02 — Home / Discover · หน้าแรก.
@@ -97,6 +100,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         children: [
           _greeting(l),
           const SizedBox(height: 16),
+          // Admin-controlled promo banners (campaigns like "สมัครใหม่รับฟรีโปร").
+          const PromoBannerCarousel(),
           _searchField(l),
           const SizedBox(height: 16),
           _chips(catalog),
@@ -124,6 +129,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                     : null,
                 loading: catalog.filterLoading,
               ),
+            // มาใหม่ + ดาวเยอะ lead the page (computed from the full catalogue).
+            if (catalog.current.isAll) ...[
+              if (catalog.newest.isNotEmpty)
+                _rail(l, l.pick('มาใหม่ 🔥', 'New arrivals 🔥'), catalog.newest,
+                    badge: const Pill(text: 'NEW', filled: true)),
+              if (catalog.topRated.isNotEmpty)
+                _rail(l, l.pick('เรตติ้งสูง ⭐', 'Top rated ⭐'), catalog.topRated),
+            ],
             // The web's curated home rails (trending + genres, incl. anime).
             for (final r in catalog.rails)
               if (r.items.isNotEmpty) _rail(l, r.title, r.items),
@@ -137,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   Widget _greeting(L10n l) {
+    final unread = context.watch<NotificationState>().unreadCount;
     return Row(
       children: [
         Expanded(
@@ -149,7 +163,31 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
             ],
           ),
         ),
-        const HexAvatar(size: 44, child: Icon(Icons.person, color: T.accentHi, size: 20)),
+        GestureDetector(
+          onTap: () => Navigator.of(context)
+              .push(MaterialPageRoute(builder: (_) => const NotificationsScreen())),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const HexAvatar(
+                  size: 44,
+                  child: Icon(Icons.notifications_rounded, color: T.accentHi, size: 20)),
+              if (unread > 0)
+                Positioned(
+                  top: -2,
+                  right: -2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                        gradient: T.accentGradient,
+                        borderRadius: BorderRadius.circular(100)),
+                    child: Text(unread > 9 ? '9+' : '$unread',
+                        style: AppTheme.body(9.5, weight: FontWeight.w800, color: T.onAccent)),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ],
     );
   }

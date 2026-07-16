@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/ad.dart';
 import '../models/content.dart';
+import '../models/notice.dart';
 import '../models/episode.dart';
 import '../models/member.dart';
 import '../models/mission.dart';
@@ -39,6 +40,11 @@ class NetwixApi {
   /// reads the code from `?ref=` (RegisterController redeems it on signup).
   static String referralUrl(String code) =>
       '$origin/register?ref=${Uri.encodeQueryComponent(code)}';
+
+  /// Legal pages (admin-editable on the web; the app renders them in a WebView
+  /// so there is exactly one source of truth).
+  static const String termsUrl = '$origin/terms';
+  static const String privacyUrl = '$origin/privacy';
 
   final Dio _dio;
   String? _token;
@@ -187,6 +193,71 @@ class NetwixApi {
           options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
     } catch (e) {
       if (kDebugMode) debugPrint('netwix recordView($contentId): $e');
+    }
+  }
+
+  // ---------------------------------------------------- notifications / banners
+
+  /// The admin-broadcast notification inbox, newest first. Empty on failure.
+  Future<List<AppNotice>> fetchNotifications({int limit = 30}) async {
+    try {
+      final d = _data(await _dio.get('/notifications',
+          queryParameters: {'limit': limit}, options: _opts));
+      final items = d?['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((m) => AppNotice.fromJson(m.cast<String, dynamic>()))
+          .whereType<AppNotice>()
+          .toList();
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix fetchNotifications: $e');
+      return const [];
+    }
+  }
+
+  /// Admin-controlled home-screen promo banners, in display order. The server
+  /// already resolved schedule + hide-for-Pro for this viewer. Empty on failure.
+  Future<List<PromoBanner>> fetchBanners() async {
+    try {
+      final d = _data(await _dio.get('/banners', options: _opts));
+      final items = d?['banners'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((m) => PromoBanner.fromJson(m.cast<String, dynamic>()))
+          .whereType<PromoBanner>()
+          .toList();
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix fetchBanners: $e');
+      return const [];
+    }
+  }
+
+  /// Report anonymous device statistics (disclosed in the privacy policy).
+  /// Fire-and-forget; never throws.
+  Future<void> sendTelemetry(Map<String, dynamic> payload) async {
+    try {
+      await _dio.post('/telemetry',
+          data: payload,
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix sendTelemetry: $e');
+    }
+  }
+
+  /// Permanently delete the signed-in account (danger zone). Returns true when
+  /// the server confirms deletion.
+  Future<bool> deleteAccount() async {
+    try {
+      final r = await _dio.delete('/account',
+          data: {'confirm': 'DELETE'},
+          options: Options(headers: _opts.headers, validateStatus: (s) => s != null && s < 500));
+      final b = r.data;
+      return b is Map && b['success'] == true;
+    } catch (e) {
+      if (kDebugMode) debugPrint('netwix deleteAccount: $e');
+      return false;
     }
   }
 

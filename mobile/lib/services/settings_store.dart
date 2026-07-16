@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLang { th, en }
@@ -47,4 +49,41 @@ class SettingsStore {
 
   bool get onboarded => _prefs.getBool(_kOnboarded) ?? false;
   Future<void> setOnboarded(bool v) => _prefs.setBool(_kOnboarded, v);
+
+  // ---------------------------------------------------------- notifications
+
+  /// Per-category notification toggles (default ON). Keys must match the
+  /// server's AppNotification categories: new_content | news | other.
+  bool notifyCategory(String category) =>
+      _prefs.getBool('notify_$category') ?? true;
+  Future<void> setNotifyCategory(String category, bool v) =>
+      _prefs.setBool('notify_$category', v);
+
+  /// Highest notification id the user has already opened the inbox for —
+  /// anything newer counts toward the unread badge.
+  int get lastSeenNoticeId => _prefs.getInt('last_seen_notice_id') ?? 0;
+  Future<void> setLastSeenNoticeId(int id) =>
+      _prefs.setInt('last_seen_notice_id', id);
+
+  // ----------------------------------------------------------------- consent
+
+  /// The user ticked "ยอมรับข้อตกลง/นโยบาย" before signing in. Once accepted the
+  /// sheet shows a plain notice instead of re-asking.
+  bool get consentAccepted => _prefs.getBool('consent_accepted') ?? false;
+  Future<void> setConsentAccepted(bool v) => _prefs.setBool('consent_accepted', v);
+
+  // --------------------------------------------------------------- telemetry
+
+  /// Random per-install key for device statistics. NOT a hardware identifier —
+  /// generated on first read, reset by reinstalling the app.
+  String get deviceKey {
+    var k = _prefs.getString('device_key');
+    if (k == null || k.length < 16) {
+      final rnd = Random.secure();
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      k = List.generate(32, (_) => alphabet[rnd.nextInt(alphabet.length)]).join();
+      _prefs.setString('device_key', k);
+    }
+    return k;
+  }
 }

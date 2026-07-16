@@ -9,11 +9,14 @@ import '../state/member_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/hex.dart';
 import '../theme/tokens.dart';
+import '../state/notification_state.dart';
 import '../widgets/common.dart';
 import '../widgets/login_sheet.dart';
 import 'earn_coins_screen.dart';
 import 'go_pro_screen.dart';
+import 'legal_screen.dart';
 import 'my_list_screen.dart';
+import 'notifications_screen.dart';
 import 'profiles_screen.dart';
 import 'wallet_screen.dart';
 import 'whats_new_screen.dart';
@@ -55,15 +58,176 @@ class MenuScreen extends StatelessWidget {
           _row(context, Icons.account_balance_wallet_rounded, 'กระเป๋าเหรียญทอง', 'Gold wallet',
               onTap: () => Navigator.of(context)
                   .push(MaterialPageRoute(builder: (_) => const WalletScreen()))),
-        _row(context, Icons.notifications_rounded, 'การแจ้งเตือน', 'Notifications',
-            onTap: () => _soon(context, l)),
+        _notificationsRow(context),
         _row(context, Icons.system_update_rounded, 'อัปเดต', 'Updates',
             onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const WhatsNewScreen()))),
+        _row(context, Icons.description_rounded, 'ข้อตกลงการใช้งาน', 'Terms of Service',
+            onTap: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const LegalScreen(doc: 'terms')))),
+        _row(context, Icons.privacy_tip_rounded, 'นโยบายความเป็นส่วนตัว', 'Privacy Policy',
+            onTap: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const LegalScreen(doc: 'privacy')))),
         _row(context, Icons.info_rounded, 'เกี่ยวกับ', 'About', onTap: () => _about(context, l)),
         const SizedBox(height: 20),
         if (!effectivePro) _upgradeBanner(context, l) else _proActiveBanner(l, member),
+        if (member.isLoggedIn) ...[
+          const SizedBox(height: 28),
+          _dangerZone(context, l),
+        ],
       ],
     );
+  }
+
+  /// การแจ้งเตือน row with the unread badge.
+  Widget _notificationsRow(BuildContext context) {
+    final unread = context.watch<NotificationState>().unreadCount;
+    return InkWell(
+      onTap: () => Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const NotificationsScreen())),
+      borderRadius: BorderRadius.circular(T.rCard),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+        child: Row(
+          children: [
+            const HexIcon(icon: Icons.notifications_rounded, size: 34, color: T.textSecondary),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('การแจ้งเตือน',
+                      style: AppTheme.body(14, weight: FontWeight.w600, color: T.textPrimary)),
+                  Text('Notifications', style: AppTheme.body(11, color: T.textFaint)),
+                ],
+              ),
+            ),
+            if (unread > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    gradient: T.accentGradient, borderRadius: BorderRadius.circular(100)),
+                child: Text(unread > 99 ? '99+' : '$unread',
+                    style: AppTheme.body(11, weight: FontWeight.w700, color: T.onAccent)),
+              ),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right_rounded, color: T.textFaint, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// โซนอันตราย — permanent account deletion, behind a typed confirmation.
+  Widget _dangerZone(BuildContext context, L10n l) {
+    const danger = Color(0xFFFF6B81);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0x14E5484D),
+        borderRadius: BorderRadius.circular(T.rCard),
+        border: Border.all(color: const Color(0x33E5484D)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l.pick('โซนอันตราย', 'Danger zone'),
+              style: AppTheme.body(13, weight: FontWeight.w700, color: danger)),
+          const SizedBox(height: 6),
+          Text(
+            l.pick(
+                'ลบบัญชีและข้อมูลทั้งหมดอย่างถาวร — ประวัติดู เหรียญ Pro และโปรไฟล์จะหายทั้งหมด กู้คืนไม่ได้',
+                'Permanently delete your account and all data — history, coins, Pro and profiles. Cannot be undone.'),
+            style: AppTheme.body(12, color: T.textMuted),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => _confirmDeleteAccount(context, l),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: danger,
+              side: const BorderSide(color: Color(0x66E5484D)),
+            ),
+            icon: const Icon(Icons.delete_forever_rounded, size: 18),
+            label: Text(l.pick('ลบบัญชีของฉัน', 'Delete my account'),
+                style: AppTheme.body(13, weight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteAccount(BuildContext context, L10n l) async {
+    final member = context.read<MemberState>();
+    final controller = TextEditingController();
+    const keyword = 'DELETE';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        // Only the button's enabled state lives here — the controller is
+        // created (and disposed) by the enclosing method, so it survives
+        // rebuilds and never leaks.
+        builder: (ctx, setState) => AlertDialog(
+          backgroundColor: T.screen,
+          title: Text(l.pick('ลบบัญชีถาวร?', 'Delete account forever?'),
+              style: AppTheme.display(17, weight: FontWeight.w700)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l.pick(
+                    'ข้อมูลทั้งหมดจะถูกลบทันทีและกู้คืนไม่ได้ พิมพ์ $keyword เพื่อยืนยัน',
+                    'All data is erased immediately and cannot be recovered. Type $keyword to confirm.'),
+                style: AppTheme.body(13, color: T.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                onChanged: (_) => setState(() {}),
+                style: AppTheme.body(14, color: T.textPrimary),
+                decoration: const InputDecoration(hintText: keyword),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text(l.pick('ยกเลิก', 'Cancel'), style: AppTheme.body(13, color: T.textMuted)),
+            ),
+            TextButton(
+              onPressed: controller.text.trim() == keyword
+                  ? () => Navigator.of(ctx).pop(true)
+                  : null,
+              child: Text(l.pick('ลบถาวร', 'Delete forever'),
+                  style: AppTheme.body(13,
+                      weight: FontWeight.w700,
+                      color: controller.text.trim() == keyword
+                          ? const Color(0xFFFF6B81)
+                          : T.textFaint)),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (confirmed != true || !context.mounted) return;
+
+    // Show progress while the server wipes the account.
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: T.accent)),
+    );
+    final ok = await member.deleteAccount();
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // close progress
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? l.pick('ลบบัญชีเรียบร้อยแล้ว ขอบคุณที่ใช้บริการ NetWix', 'Account deleted. Thank you for using NetWix')
+          : l.pick('ลบบัญชีไม่สำเร็จ กรุณาลองใหม่หรือติดต่อทีมงาน', 'Could not delete the account — please retry or contact support')),
+    ));
   }
 
   Widget _referralPromoRow(BuildContext context, L10n l, MemberState member) {
@@ -347,10 +511,6 @@ class MenuScreen extends StatelessWidget {
       ),
     );
   }
-
-  void _soon(BuildContext context, L10n l) => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l.pick('จะมาในเวอร์ชันถัดไป', 'Coming soon'))),
-      );
 
   // Custom About dialog — deliberately NOT showAboutDialog, which injects a
   // "View licenses" button (the open-source license page) we don't want users

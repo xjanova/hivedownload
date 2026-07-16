@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.4.1
+version: 1.5.0
 
 environment:
   sdk: ^3.11.5
@@ -44,6 +44,14 @@ dependencies:
   google_fonts: ^8.1.0
   shared_preferences: ^2.5.5
   package_info_plus: ^10.2.0
+  # Device model/OS for the anonymous telemetry ping (disclosed in the privacy
+  # policy) — no hardware identifiers are read, only model + OS version.
+  device_info_plus: ^13.2.0
+  # FCM push notifications (project netwix-online). Topic-based: the app
+  # subscribes to new_content/news/other per the user's toggles; the backend
+  # broadcasts to the matching topic when admin posts a notification.
+  firebase_core: ^4.4.0
+  firebase_messaging: ^16.1.0
   ota_update: ^7.1.0
   url_launcher: ^6.3.2
   wakelock_plus: ^1.6.1

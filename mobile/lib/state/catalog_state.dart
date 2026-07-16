@@ -101,6 +101,24 @@ class CatalogState extends ChangeNotifier {
     return all.take(10).toList();
   }
 
+  /// "มาใหม่" — newest catalogue additions. Backend ids are monotonically
+  /// increasing on import, so id desc ≈ recency without needing a created_at.
+  List<Content> get newest {
+    final all = List<Content>.from(_items['all'] ?? const [])
+      ..sort((a, b) => b.id.compareTo(a.id));
+    return all.take(18).toList();
+  }
+
+  /// "ดาวเยอะ" — highest-rated titles (rated ones only, then popularity).
+  List<Content> get topRated {
+    final all = (_items['all'] ?? const <Content>[]).where((c) => c.rating > 0).toList()
+      ..sort((a, b) {
+        final r = b.rating.compareTo(a.rating);
+        return r != 0 ? r : b.views.compareTo(a.views);
+      });
+    return all.take(18).toList();
+  }
+
   @override
   void dispose() {
     _searchDebounce?.cancel();

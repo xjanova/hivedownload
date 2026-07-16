@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/l10n.dart';
+import '../screens/legal_screen.dart';
 import '../services/auth_service.dart';
 import '../services/netwix_api.dart';
 import '../state/app_state.dart';
@@ -35,9 +36,16 @@ class _LoginSheetState extends State<_LoginSheet> {
   /// without credentials are hidden so nobody taps a dead button.
   Map<String, bool>? _social;
 
+  /// ToS/privacy consent. Persisted once accepted, so a returning user sees a
+  /// plain "การเข้าสู่ระบบถือว่ายอมรับ..." line instead of the checkbox.
+  bool _agreed = false;
+  bool _alreadyConsented = false;
+
   @override
   void initState() {
     super.initState();
+    _alreadyConsented = context.read<AppState>().settings.consentAccepted;
+    _agreed = _alreadyConsented;
     _loadProviders();
   }
 
@@ -51,8 +59,21 @@ class _LoginSheetState extends State<_LoginSheet> {
 
   Future<void> _login(AuthProvider provider) async {
     if (_busy != null) return;
-    setState(() => _busy = provider);
     final l = context.read<AppState>().l;
+    if (!_agreed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(l.pick('กรุณายอมรับข้อตกลงการใช้งานก่อนเข้าสู่ระบบ',
+                'Please accept the terms before signing in'))),
+      );
+      return;
+    }
+    if (!_alreadyConsented) {
+      _alreadyConsented = true;
+      await context.read<AppState>().settings.setConsentAccepted(true);
+    }
+    if (!mounted) return;
+    setState(() => _busy = provider);
     try {
       await context.read<MemberState>().login(provider);
       if (mounted) Navigator.of(context).pop(true);
@@ -98,7 +119,9 @@ class _LoginSheetState extends State<_LoginSheet> {
               l.pick('บันทึกประวัติดู รายการโปรด และรับ 10 เหรียญฟรีครั้งแรก',
                   'Save history, favorites & get 10 free coins on first sign-in'),
               style: AppTheme.body(13, color: T.textMuted)),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
+          _consent(l),
+          const SizedBox(height: 14),
 
           // Social providers load from the server; only configured ones show.
           if (_social == null)
@@ -145,6 +168,65 @@ class _LoginSheetState extends State<_LoginSheet> {
           ),
         ],
       ),
+    );
+  }
+
+  /// ToS/privacy consent line. First run: a required checkbox. After the user
+  /// has consented once: an informational line with the same links.
+  Widget _consent(L10n l) {
+    Widget link(String label, String doc) => GestureDetector(
+          onTap: _busy == null
+              ? () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => LegalScreen(doc: doc)))
+              : null,
+          child: Text(label,
+              style: AppTheme.body(12,
+                  weight: FontWeight.w700,
+                  color: T.accent,
+                  ).copyWith(decoration: TextDecoration.underline, decorationColor: T.accent)),
+        );
+
+    final text = Expanded(
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 4,
+        children: [
+          Text(
+              _alreadyConsented
+                  ? l.pick('การเข้าสู่ระบบถือว่าคุณยอมรับ', 'By signing in you agree to the')
+                  : l.pick('ฉันได้อ่านและยอมรับ', 'I have read and accept the'),
+              style: AppTheme.body(12, color: T.textMuted)),
+          link(l.pick('ข้อตกลงการใช้งาน', 'Terms'), 'terms'),
+          Text(l.pick('และ', 'and'), style: AppTheme.body(12, color: T.textMuted)),
+          link(l.pick('นโยบายความเป็นส่วนตัว', 'Privacy Policy'), 'privacy'),
+        ],
+      ),
+    );
+
+    if (_alreadyConsented) {
+      return Row(children: [
+        const Icon(Icons.verified_user_rounded, size: 16, color: T.textFaint),
+        const SizedBox(width: 8),
+        text,
+      ]);
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 22,
+          height: 22,
+          child: Checkbox(
+            value: _agreed,
+            onChanged: _busy == null ? (v) => setState(() => _agreed = v ?? false) : null,
+            activeColor: T.accent,
+            side: const BorderSide(color: T.textMuted, width: 1.5),
+          ),
+        ),
+        const SizedBox(width: 10),
+        text,
+      ],
     );
   }
 
